@@ -12,7 +12,7 @@
     server_openbao_addr: "{{ live_openbao_addr }}"
     server_openbao_mount: "{{ live_openbao_mount }}"
     server_openbao_token: "{{ live_openbao_root_token }}"
-    server_openbao_ca_file: /etc/ssl/cert.pem
+    server_openbao_ca_file: "{{ live_openbao_ca_file }}"
     server_inventory_token_path: "{{ live_service_account_secrets.inventory.path }}"
     server_mcp_token_path: "{{ live_service_account_secrets.mcp.path }}"
     server_pipeline_token_path: "{{ live_service_account_secrets.pipeline.path }}"
