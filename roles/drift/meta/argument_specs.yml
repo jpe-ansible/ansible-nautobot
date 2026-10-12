@@ -1,0 +1,45 @@
+---
+argument_specs:
+  main:
+    short_description: Compare Nautobot VMs with the published source inventory and report drift.
+    options:
+      drift_nautobot_url:
+        type: str
+        required: true
+        description: Nautobot base URL without a trailing slash.
+      drift_read_token:
+        type: str
+        required: true
+        description: Read-only Nautobot API token.
+        no_log: true
+      drift_source_inventory:
+        type: dict
+        required: true
+        description: Parsed published source inventory object.
+      drift_hec_url:
+        type: str
+        required: true
+        description: Base URL for the HEC input without a trailing slash.
+      drift_hec_token:
+        type: str
+        required: true
+        description: HEC sender token.
+        no_log: true
+      drift_hec_ca_path:
+        type: str
+        required: false
+        description: CA bundle that verifies the HEC server certificate when a private CA issued it.
+      drift_hec_index:
+        type: str
+        required: false
+        description: HEC index for the event.
+      drift_source_groups:
+        type: list
+        elements: str
+        required: false
+        description: Top-level keys of the source inventory that hold guest mappings.
+      drift_unmodelled_domains:
+        type: list
+        elements: str
+        required: false
+        description: Source domains not represented by Nautobot models; the event lists them.

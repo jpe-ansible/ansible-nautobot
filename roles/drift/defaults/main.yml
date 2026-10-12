@@ -1,0 +1,32 @@
+---
+drift_hec_index: ansible
+drift_source_groups:
+  - containers
+  - vms
+  - docker_vms
+drift_unmodelled_domains: []
+drift_rest_count_endpoints:
+  - key: ipam/vlans
+    path: ipam/vlans/?limit=1
+  - key: ipam/prefixes
+    path: ipam/prefixes/?limit=1
+  - key: ipam/ip-addresses
+    path: ipam/ip-addresses/?limit=1
+  - key: dcim/devices
+    path: dcim/devices/?limit=1
+  - key: dcim/modules
+    path: dcim/modules/?limit=1
+  - key: dcim/module-types
+    path: dcim/module-types/?limit=1
+  - key: circuits/circuits
+    path: circuits/circuits/?limit=1
+  - key: circuits/providers
+    path: circuits/providers/?limit=1
+  - key: virtualization/virtual-machines
+    path: virtualization/virtual-machines/?limit=1
+  - key: extras/tags
+    path: extras/tags/?limit=1
+  - key: dcim/modules (installed)
+    path: dcim/modules/?limit=1&parent_module_bay__isnull=false
+  - key: dcim/modules (spare)
+    path: dcim/modules/?limit=1&parent_module_bay__isnull=true

@@ -1,0 +1,98 @@
+---
+- name: Initialize source guest map
+  ansible.builtin.set_fact:
+    drift_source_guests: {}
+
+- name: Build source guest map
+  ansible.builtin.set_fact:
+    drift_source_guests: >-
+      {{ drift_source_guests | combine({
+           (item.value.hostname | default(item.key, true)):
+           (item.value.tags | default([], true) | unique | sort | list)
+         }) }}
+  loop: >-
+    {{ drift_source_groups
+       | map('extract', drift_source_inventory)
+       | map('default', {}) | map('dict2items') | flatten }}
+
+- name: Initialize Nautobot guest map
+  ansible.builtin.set_fact:
+    drift_nautobot_guests: {}
+
+- name: Build Nautobot guest map
+  ansible.builtin.set_fact:
+    drift_nautobot_guests: >-
+      {{ drift_nautobot_guests | combine({
+           item.name:
+           (item.tags | default([], true) | map(attribute='name') | unique | sort | list)
+         }) }}
+  loop: "{{ drift_nautobot_graphql.json.data.virtual_machines }}"
+
+- name: Compare source and Nautobot guest names
+  ansible.builtin.set_fact:
+    drift_missing_in_nautobot: >-
+      {{ drift_source_guests.keys() | list
+         | difference(drift_nautobot_guests.keys() | list) | sort }}
+    drift_extra_in_nautobot: >-
+      {{ drift_nautobot_guests.keys() | list
+         | difference(drift_source_guests.keys() | list) | sort }}
+    drift_common_guest_names: >-
+      {{ drift_source_guests.keys() | list
+         | intersect(drift_nautobot_guests.keys() | list) | sort }}
+
+- name: Initialize tag drift list
+  ansible.builtin.set_fact:
+    drift_tag_drift: []
+
+- name: Find missing source tags on common guests
+  ansible.builtin.set_fact:
+    drift_tag_drift: >-
+      {{ drift_tag_drift + [{
+           'name': item,
+           'missing_tags': drift_source_guests[item]
+                          | difference(drift_nautobot_guests[item]) | sort
+         }] }}
+  loop: "{{ drift_common_guest_names }}"
+  when: (drift_source_guests[item] | difference(drift_nautobot_guests[item]) | length) > 0
+
+- name: Initialize REST count map
+  ansible.builtin.set_fact:
+    drift_api_counts: {}
+
+- name: Build REST count map
+  ansible.builtin.set_fact:
+    drift_api_counts: "{{ drift_api_counts | combine({item.item.key: item.json.count}) }}"
+  loop: "{{ drift_rest_count_responses.results }}"
+
+- name: Determine drift severity
+  ansible.builtin.set_fact:
+    drift_severity: >-
+      {{ 'critical'
+         if (drift_missing_in_nautobot | length > 0 or drift_extra_in_nautobot | length > 0)
+         else 'warning' if drift_tag_drift | length > 0
+         else 'info' }}
+
+- name: Build event counts
+  ansible.builtin.set_fact:
+    drift_event_counts: >-
+      {{ drift_api_counts | combine({
+           'missing_in_nautobot': drift_missing_in_nautobot | length,
+           'extra_in_nautobot': drift_extra_in_nautobot | length,
+           'tag_drift': drift_tag_drift | length
+         }) }}
+
+- name: Build drift event envelope
+  ansible.builtin.set_fact:
+    drift_event_envelope:
+      time: "{{ now(utc=true, fmt='%s') | int }}"
+      host: "{{ inventory_hostname }}"
+      source: jpe_ansible.nautobot.drift
+      sourcetype: nautobot:drift
+      index: "{{ drift_hec_index }}"
+      event:
+        severity: "{{ drift_severity }}"
+        counts: "{{ drift_event_counts }}"
+        missing_in_nautobot: "{{ drift_missing_in_nautobot }}"
+        extra_in_nautobot: "{{ drift_extra_in_nautobot }}"
+        tag_drift: "{{ drift_tag_drift }}"
+        unmodelled_domains: "{{ drift_unmodelled_domains }}"
