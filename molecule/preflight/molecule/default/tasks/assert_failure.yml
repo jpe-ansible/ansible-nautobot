@@ -1,0 +1,24 @@
+---
+- name: Verify the fixture fails for its named reason {{ preflight_fixture_case.name }}
+  block:
+    - name: Run pre-flight role with the failure fixture
+      ansible.builtin.include_role:
+        name: preflight
+      vars:
+        preflight_nautobot_devices: "{{ preflight_fixture_case.devices | default(preflight_fixture_devices) }}"
+        preflight_nautobot_guests: "{{ preflight_fixture_case.guests | default(preflight_fixture_guests) }}"
+        preflight_desired_guests: "{{ preflight_fixture_case.desired | default(preflight_fixture_desired) }}"
+        preflight_graphql_errors: "{{ preflight_fixture_case.errors | default([]) }}"
+
+    - name: Fail when the fixture passes
+      ansible.builtin.fail:
+        msg: "Fixture unexpectedly passed: {{ preflight_fixture_case.name }}"
+
+  rescue:
+    - name: Assert the named failure message
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_result.msg == preflight_fixture_case.expected
+        fail_msg: >-
+          Expected {{ preflight_fixture_case.expected }},
+          got {{ ansible_failed_result.msg }}.

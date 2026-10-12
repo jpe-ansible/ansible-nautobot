@@ -1,0 +1,6 @@
+---
+preflight_skip_fetch: false
+preflight_nautobot_devices: []
+preflight_nautobot_guests: []
+preflight_desired_guests: {}
+preflight_graphql_errors: []
