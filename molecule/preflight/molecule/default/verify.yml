@@ -1,0 +1,235 @@
+---
+- name: Verify pre-flight policy
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - fixtures/passing.yml
+  vars:
+    preflight_fixture_ram_cases:
+      - name: live placement RAM limit
+        guests:
+          - name: vm-fixture
+            memory_mb: 9216
+            current_node: node-a
+            live_disks:
+              - interface: scsi0
+                datastore: pool-a
+        expected: >-
+          RAM preflight failed for node-a (live placement): 9216 MiB allocated exceeds 8192 MiB physical
+      - name: desired placement RAM limit
+        desired:
+          vm-fixture:
+            node: node-a
+            memory_mb: 9216
+            disks:
+              - interface: scsi0
+                datastore_id: pool-a
+        expected: >-
+          RAM preflight failed for node-a (desired placement): 9216 MiB allocated exceeds 8192 MiB physical
+      - name: desired placement includes live-only guests
+        devices:
+          - name: node-a
+            cf_physical_ram_mb: 8192
+          - name: node-b
+            cf_physical_ram_mb: 8192
+        guests:
+          - name: vm-fixture
+            memory_mb: 4096
+            current_node: node-b
+            live_disks:
+              - interface: scsi0
+                datastore: pool-a
+          - name: vm-unmanaged
+            memory_mb: 6000
+            current_node: node-a
+            live_disks:
+              - interface: scsi0
+                datastore: pool-a
+        desired:
+          vm-fixture:
+            node: node-a
+            memory_mb: 4096
+            disks:
+              - interface: scsi0
+                datastore_id: pool-a
+        expected: >-
+          RAM preflight failed for node-a (desired placement): 10096 MiB allocated exceeds 8192 MiB physical
+          (includes 6000 MiB from guests outside the desired set)
+    preflight_fixture_missing_ram_reference_cases:
+      - name: live guest references a device without RAM
+        devices:
+          - name: node-a
+            cf_physical_ram_mb: 8192
+          - name: node-no-ram
+        guests:
+          - name: vm-fixture
+            memory_mb: 2048
+            current_node: node-no-ram
+            live_disks:
+              - interface: scsi0
+                datastore: pool-a
+        desired: {}
+        expected: "Pre-flight data incomplete: device node-no-ram missing cf_physical_ram_mb"
+      - name: desired guest references a device without RAM
+        devices:
+          - name: node-a
+            cf_physical_ram_mb: 8192
+          - name: node-no-ram
+        desired:
+          vm-fixture:
+            node: node-no-ram
+            memory_mb: 2048
+            disks:
+              - interface: scsi0
+                datastore_id: pool-a
+        expected: "Pre-flight data incomplete: device node-no-ram missing cf_physical_ram_mb"
+    preflight_fixture_duplicate_guest_cases:
+      - name: duplicate Nautobot guest name
+        guests:
+          - name: vm-fixture
+            memory_mb: 2048
+            current_node: node-a
+            live_disks:
+              - interface: scsi0
+                datastore: pool-b
+          - name: vm-fixture
+            memory_mb: 2048
+            current_node: node-a
+            live_disks:
+              - interface: scsi0
+                datastore: pool-a
+        expected: "Pre-flight data incomplete: duplicate guest vm-fixture"
+    preflight_fixture_duplicate_disk_cases:
+      - name: duplicate live disk interface
+        guests:
+          - name: vm-fixture
+            memory_mb: 2048
+            current_node: node-a
+            live_disks:
+              - interface: scsi0
+                datastore: pool-b
+              - interface: scsi0
+                datastore: pool-a
+        expected: "Pre-flight data incomplete: duplicate live disk vm-fixture/scsi0"
+    preflight_fixture_data_cases:
+      - name: GraphQL errors are rejected
+        errors:
+          - fixture GraphQL error
+        expected: "Pre-flight data incomplete: GraphQL returned errors"
+      - name: an empty device list is rejected
+        devices: []
+        guests: []
+        desired: {}
+        expected: "Pre-flight data incomplete: no devices returned"
+      - name: a desired guest on a node without a device is rejected
+        desired:
+          vm-fixture:
+            node: node-b
+            memory_mb: 2048
+            disks:
+              - interface: scsi0
+                datastore_id: pool-a
+        expected: "Pre-flight data incomplete: device for node node-b not found"
+      - name: a live guest on a node without a device is rejected
+        guests:
+          - name: vm-fixture
+            memory_mb: 2048
+            current_node: node-b
+            live_disks:
+              - interface: scsi0
+                datastore: pool-a
+        desired: {}
+        expected: "Pre-flight data incomplete: device for node node-b not found"
+      - name: a desired guest absent from Nautobot is rejected
+        guests: []
+        desired:
+          vm-absent:
+            node: node-a
+            memory_mb: 2048
+            disks:
+              - interface: scsi0
+                datastore_id: pool-a
+        expected: "Storage-pool preflight failed for vm-absent/scsi0: expected pool-a, found none"
+      - name: a device without a usable name is rejected
+        devices:
+          - cf_physical_ram_mb: 8192
+        guests: []
+        desired: {}
+        expected: "Pre-flight data incomplete: device name missing"
+      - name: a guest without a name is rejected
+        guests:
+          - memory_mb: 2048
+            current_node: node-a
+            live_disks:
+              - interface: scsi0
+                datastore: pool-a
+        desired: {}
+        expected: "Pre-flight data incomplete: guest name missing"
+  tasks:
+    - name: Include pre-flight role with the passing fixture
+      ansible.builtin.include_role:
+        name: preflight
+      vars:
+        preflight_nautobot_devices: "{{ preflight_fixture_devices }}"
+        preflight_nautobot_guests: "{{ preflight_fixture_guests }}"
+        preflight_desired_guests: "{{ preflight_fixture_desired }}"
+
+    - name: Confirm an unreferenced device without RAM is allowed
+      ansible.builtin.include_role:
+        name: preflight
+      vars:
+        preflight_nautobot_devices: "{{ preflight_fixture_devices + [{'name': 'unreferenced-device'}] }}"
+        preflight_nautobot_guests: "{{ preflight_fixture_guests }}"
+        preflight_desired_guests: "{{ preflight_fixture_desired }}"
+
+    - name: Confirm a managed guest is counted once
+      ansible.builtin.include_role:
+        name: preflight
+      vars:
+        preflight_nautobot_devices:
+          - name: node-a
+            cf_physical_ram_mb: 6144
+        preflight_nautobot_guests:
+          - name: vm-fixture
+            memory_mb: 4096
+            current_node: node-a
+            live_disks:
+              - interface: scsi0
+                datastore: pool-a
+        preflight_desired_guests:
+          vm-fixture:
+            node: node-a
+            memory_mb: 4096
+            disks:
+              - interface: scsi0
+                datastore_id: pool-a
+
+    - name: Verify RAM failure paths
+      ansible.builtin.include_tasks: tasks/assert_failure.yml
+      loop: "{{ preflight_fixture_ram_cases }}"
+      loop_control:
+        loop_var: preflight_fixture_case
+
+    - name: Verify referenced devices require physical RAM
+      ansible.builtin.include_tasks: tasks/assert_failure.yml
+      loop: "{{ preflight_fixture_missing_ram_reference_cases }}"
+      loop_control:
+        loop_var: preflight_fixture_case
+
+    - name: Verify duplicate guest records are rejected
+      ansible.builtin.include_tasks: tasks/assert_failure.yml
+      loop: "{{ preflight_fixture_duplicate_guest_cases }}"
+      loop_control:
+        loop_var: preflight_fixture_case
+
+    - name: Verify duplicate live disk records are rejected
+      ansible.builtin.include_tasks: tasks/assert_failure.yml
+      loop: "{{ preflight_fixture_duplicate_disk_cases }}"
+      loop_control:
+        loop_var: preflight_fixture_case
+
+    - name: Verify remaining incomplete data cases
+      ansible.builtin.include_tasks: tasks/assert_failure.yml
+      loop: "{{ preflight_fixture_data_cases }}"
+      loop_control:
+        loop_var: preflight_fixture_case

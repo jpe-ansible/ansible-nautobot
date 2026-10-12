@@ -1,0 +1,14 @@
+---
+- name: Converge
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - fixtures/passing.yml
+  tasks:
+    - name: Include pre-flight role
+      ansible.builtin.include_role:
+        name: preflight
+      vars:
+        preflight_nautobot_devices: "{{ preflight_fixture_devices }}"
+        preflight_nautobot_guests: "{{ preflight_fixture_guests }}"
+        preflight_desired_guests: "{{ preflight_fixture_desired }}"

@@ -1,0 +1,400 @@
+---
+- name: Normalize memory quantities to MiB
+  ansible.builtin.set_fact:
+    preflight_memory_inputs: >-
+      {%- set normalized = {'nodes': [], 'physical': [], 'live': [], 'desired': []} -%}
+      {%- for device in (
+            preflight_nautobot_devices
+            if preflight_nautobot_devices is sequence
+            and preflight_nautobot_devices is not string
+            and preflight_nautobot_devices is not mapping else []) -%}
+      {%-   if device is mapping and device.name is defined and device.name is string -%}
+      {%-     set _ = normalized.nodes.append(device.name) -%}
+      {%-     if (
+                device.cf_physical_ram_mb is defined
+                and device.cf_physical_ram_mb is integer
+                and device.cf_physical_ram_mb is not boolean
+              ) -%}
+      {%-       set _ = normalized.physical.append(
+                    {'node': device.name, 'memory_mib': device.cf_physical_ram_mb}
+                  ) -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for guest in (
+            preflight_nautobot_guests
+            if preflight_nautobot_guests is sequence
+            and preflight_nautobot_guests is not string
+            and preflight_nautobot_guests is not mapping else []) -%}
+      {%-   if (
+            guest is mapping
+            and guest.name is defined
+            and guest.current_node is defined
+            and guest.current_node is string
+            and guest.memory_mb is defined
+            and guest.memory_mb is integer
+            and guest.memory_mb is not boolean
+          ) -%}
+      {%-     set _ = normalized.live.append(
+                  {
+                    'name': guest.name,
+                    'node': guest.current_node,
+                    'memory_mib': guest.memory_mb
+                  }
+                ) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for name, guest in (
+            preflight_desired_guests if preflight_desired_guests is mapping else {}
+          ).items() -%}
+      {%-   if (
+            guest is mapping
+            and guest.node is defined
+            and guest.node is string
+            and guest.memory_mb is defined
+            and guest.memory_mb is integer
+            and guest.memory_mb is not boolean
+          ) -%}
+      {%-     set _ = normalized.desired.append({'name': name, 'node': guest.node, 'memory_mib': guest.memory_mb}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ normalized }}
+
+- name: Collect incomplete inventory and desired-state fields
+  ansible.builtin.set_fact:
+    preflight_data_failures: >-
+      {%- set failures = [] -%}
+      {%- set referenced = [] -%}
+      {%- for referenced_guest in (
+            preflight_nautobot_guests
+            if preflight_nautobot_guests is sequence
+            and preflight_nautobot_guests is not string
+            and preflight_nautobot_guests is not mapping else []) -%}
+      {%-   if referenced_guest is mapping and referenced_guest.current_node is string -%}
+      {%-     set _ = referenced.append(referenced_guest.current_node) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for referenced_guest in (
+            preflight_desired_guests.values()
+            if preflight_desired_guests is mapping else []) -%}
+      {%-   if referenced_guest is mapping and referenced_guest.node is string -%}
+      {%-     set _ = referenced.append(referenced_guest.node) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- if preflight_graphql_errors | default([], true) | length > 0 -%}
+      {%-   set _ = failures.append('Pre-flight data incomplete: GraphQL returned errors') -%}
+      {%- endif -%}
+      {%- set devices = preflight_nautobot_devices | default(none) -%}
+      {%- if devices is not sequence or devices is string or devices is mapping -%}
+      {%-   set _ = failures.append('Pre-flight data incomplete: devices field missing') -%}
+      {%- elif devices | length == 0 -%}
+      {%-   set _ = failures.append('Pre-flight data incomplete: no devices returned') -%}
+      {%- else -%}
+      {%-   for device in devices -%}
+      {%-     if device is not mapping -%}
+      {%-       set _ = failures.append('Pre-flight data incomplete: device record is invalid') -%}
+      {%-     else -%}
+      {%-       set name = device.name | default('unknown') -%}
+      {%-       if device.name is not defined or name is not string or name | length == 0 -%}
+      {%-         set _ = failures.append('Pre-flight data incomplete: device name missing') -%}
+      {%-       endif -%}
+      {%-       if name in referenced and (
+                    device.cf_physical_ram_mb is not defined
+                    or device.cf_physical_ram_mb is none
+                    or device.cf_physical_ram_mb is not integer
+                    or device.cf_physical_ram_mb is boolean
+                    or device.cf_physical_ram_mb <= 0
+                  ) -%}
+      {%-         set _ = failures.append(
+                    'Pre-flight data incomplete: device '
+                    ~ name ~ ' missing cf_physical_ram_mb'
+                  ) -%}
+      {%-       endif -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {%- set guests = preflight_nautobot_guests | default(none) -%}
+      {%- if guests is not sequence or guests is string or guests is mapping -%}
+      {%-   set _ = failures.append('Pre-flight data incomplete: virtual_machines field missing') -%}
+      {%- else -%}
+      {%-   set seen_guests = [] -%}
+      {%-   for guest in guests -%}
+      {%-     if guest is not mapping -%}
+      {%-       set _ = failures.append('Pre-flight data incomplete: guest record is invalid') -%}
+      {%-     else -%}
+      {%-       set name = guest.name | default('unknown') -%}
+      {%-       if guest.name is not defined or name is not string or name | length == 0 -%}
+      {%-         set _ = failures.append('Pre-flight data incomplete: guest name missing') -%}
+      {%-       else -%}
+      {%-         if name in seen_guests -%}
+      {%-           set message = 'Pre-flight data incomplete: duplicate guest ' ~ name -%}
+      {%-           if message not in failures -%}{%- set _ = failures.append(message) -%}{%- endif -%}
+      {%-         endif -%}
+      {%-         set _ = seen_guests.append(name) -%}
+      {%-       endif -%}
+      {%-       if (
+                    guest.memory_mb is not defined
+                    or guest.memory_mb is none
+                    or guest.memory_mb is not integer
+                    or guest.memory_mb is boolean
+                    or guest.memory_mb <= 0
+                  ) -%}
+      {%-         set _ = failures.append('Pre-flight data incomplete: guest ' ~ name ~ ' missing memory') -%}
+      {%-       endif -%}
+      {%-       if (
+                    guest.current_node is not defined
+                    or guest.current_node is none
+                    or guest.current_node is not string
+                    or guest.current_node | length == 0
+                  ) -%}
+      {%-         set _ = failures.append('Pre-flight data incomplete: guest ' ~ name ~ ' missing cf_current_node') -%}
+      {%-       endif -%}
+      {%-       if (
+                    guest.live_disks is not defined
+                    or guest.live_disks is none
+                    or guest.live_disks is not sequence
+                    or guest.live_disks is string
+                    or guest.live_disks is mapping
+                  ) -%}
+      {%-         set _ = failures.append('Pre-flight data incomplete: guest ' ~ name ~ ' missing cf_live_disks') -%}
+      {%-       else -%}
+      {%-         set seen_interfaces = [] -%}
+      {%-         for disk in guest.live_disks -%}
+      {%-           if (
+                        disk is not mapping
+                        or disk.interface is not defined
+                        or disk.interface is none
+                        or disk.interface is not string
+                        or disk.interface | length == 0
+                      ) -%}
+      {%-             set _ = failures.append(
+                            'Pre-flight data incomplete: guest ' ~ name
+                            ~ ' live disk interface missing'
+                          ) -%}
+      {%-           elif (
+                          disk.datastore is not defined
+                          or disk.datastore is none
+                          or disk.datastore is not string
+                          or disk.datastore | length == 0
+                        ) -%}
+      {%-             set _ = failures.append(
+                          'Pre-flight data incomplete: guest '
+                          ~ name ~ '/' ~ disk.interface ~ ' live datastore missing'
+                        ) -%}
+      {%-           endif -%}
+      {%-           if disk is mapping and disk.interface is string and disk.interface | length > 0 -%}
+      {%-             if disk.interface in seen_interfaces -%}
+      {%-               set message = (
+                              'Pre-flight data incomplete: duplicate live disk '
+                              ~ name ~ '/' ~ disk.interface
+                            ) -%}
+      {%-               if message not in failures -%}{%- set _ = failures.append(message) -%}{%- endif -%}
+      {%-             endif -%}
+      {%-             set _ = seen_interfaces.append(disk.interface) -%}
+      {%-           endif -%}
+      {%-         endfor -%}
+      {%-       endif -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {%- set desired = preflight_desired_guests | default(none) -%}
+      {%- if desired is not mapping -%}
+      {%-   set _ = failures.append('Pre-flight data incomplete: desired guests field missing') -%}
+      {%- else -%}
+      {%-   for name, guest in desired.items() -%}
+      {%-     if guest is not mapping -%}
+      {%-       set _ = failures.append('Pre-flight data incomplete: desired guest ' ~ name ~ ' is invalid') -%}
+      {%-     else -%}
+      {%-       if (
+                    guest.node is not defined
+                    or guest.node is none
+                    or guest.node is not string
+                    or guest.node | length == 0
+                  ) -%}
+      {%-         set _ = failures.append('Pre-flight data incomplete: desired guest ' ~ name ~ ' missing node') -%}
+      {%-       endif -%}
+      {%-       if (
+                    guest.memory_mb is not defined
+                    or guest.memory_mb is none
+                    or guest.memory_mb is not integer
+                    or guest.memory_mb is boolean
+                    or guest.memory_mb <= 0
+                  ) -%}
+      {%-         set _ = failures.append(
+                    'Pre-flight data incomplete: desired guest ' ~ name
+                    ~ ' missing memory_mb'
+                  ) -%}
+      {%-       endif -%}
+      {%-       if (
+                    guest.disks is not defined
+                    or guest.disks is none
+                    or guest.disks is not sequence
+                    or guest.disks is string
+                    or guest.disks is mapping
+                  ) -%}
+      {%-         set _ = failures.append('Pre-flight data incomplete: desired guest ' ~ name ~ ' missing disks') -%}
+      {%-       else -%}
+      {%-         for disk in guest.disks -%}
+      {%-           if (
+                        disk is not mapping
+                        or disk.interface is not defined
+                        or disk.interface is none
+                        or disk.interface is not string
+                        or disk.interface | length == 0
+                      ) -%}
+      {%-             set _ = failures.append(
+                            'Pre-flight data incomplete: desired guest ' ~ name
+                            ~ ' disk interface missing'
+                          ) -%}
+      {%-           endif -%}
+      {%-           if (
+                        disk is not mapping
+                        or disk.datastore_id is not defined
+                        or disk.datastore_id is none
+                        or disk.datastore_id is not string
+                        or disk.datastore_id | length == 0
+                      ) -%}
+      {%-             set _ = failures.append(
+                            'Pre-flight data incomplete: desired guest ' ~ name
+                            ~ ' disk datastore_id missing'
+                          ) -%}
+      {%-           endif -%}
+      {%-         endfor -%}
+      {%-       endif -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {{ failures }}
+
+- name: Compare live and desired memory with physical capacity and disk pools
+  ansible.builtin.set_fact:
+    preflight_policy_failures: >-
+      {%- set failures = [] -%}
+      {%- set guests = (
+            preflight_nautobot_guests
+            if preflight_nautobot_guests is sequence
+            and preflight_nautobot_guests is not string
+            and preflight_nautobot_guests is not mapping else []) -%}
+      {%- set desired = preflight_desired_guests if preflight_desired_guests is mapping else {} -%}
+      {%- set memory = preflight_memory_inputs -%}
+      {%- for guest in memory.live -%}
+      {%-   if (
+            guest.node | length > 0
+            and guest.node not in memory.nodes
+          ) -%}
+      {%-     set message = 'Pre-flight data incomplete: device for node ' ~ guest.node ~ ' not found' -%}
+      {%-     if message not in failures -%}{%- set _ = failures.append(message) -%}{%- endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for guest in memory.desired -%}
+      {%-   if (
+            guest.node | length > 0
+            and guest.node not in memory.nodes
+          ) -%}
+      {%-     set message = 'Pre-flight data incomplete: device for node ' ~ guest.node ~ ' not found' -%}
+      {%-     if message not in failures -%}{%- set _ = failures.append(message) -%}{%- endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for device in memory.physical -%}
+      {%-   if device.node is string and device.node | length > 0 and device.memory_mib > 0 -%}
+      {%-     set live_memory = namespace(total=0) -%}
+      {%-     for guest in memory.live -%}
+      {%-       if guest.node == device.node -%}
+      {%-         set live_memory.total = live_memory.total + guest.memory_mib -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-     if live_memory.total > device.memory_mib -%}
+      {%-       set _ = failures.append(
+                    'RAM preflight failed for ' ~ device.node ~ ' (live placement): '
+                    ~ live_memory.total ~ ' MiB allocated exceeds '
+                    ~ device.memory_mib ~ ' MiB physical'
+                  ) -%}
+      {%-     endif -%}
+      {%-     set desired_memory = namespace(total=0, outside=0) -%}
+      {%-     for guest in memory.desired -%}
+      {%-       if guest.node == device.node -%}
+      {%-         set desired_memory.total = desired_memory.total + guest.memory_mib -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-     for guest in memory.live -%}
+      {%-       if guest.node == device.node and guest.name not in desired -%}
+      {%-         set desired_memory.total = desired_memory.total + guest.memory_mib -%}
+      {%-         set desired_memory.outside = desired_memory.outside + guest.memory_mib -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-     if desired_memory.total > device.memory_mib -%}
+      {%-       set _ = failures.append(
+                    'RAM preflight failed for ' ~ device.node ~ ' (desired placement): '
+                    ~ desired_memory.total ~ ' MiB allocated exceeds '
+                    ~ device.memory_mib ~ ' MiB physical'
+                    ~ (
+                      ' (includes ' ~ desired_memory.outside
+                      ~ ' MiB from guests outside the desired set)'
+                      if desired_memory.outside > 0 else ''
+                    )
+                  ) -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for name, desired_guest in desired.items() -%}
+      {%-   if (
+            desired_guest is mapping
+            and desired_guest.disks is defined
+            and desired_guest.disks is sequence
+            and desired_guest.disks is not string
+            and desired_guest.disks is not mapping
+          ) -%}
+      {%-     set live_guest = namespace(value=none) -%}
+      {%-     for guest in guests -%}
+      {%-       if guest is mapping and guest.name | default(none) == name -%}
+      {%-         set live_guest.value = guest -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-     for desired_disk in desired_guest.disks -%}
+      {%-       if (
+                    desired_disk is mapping
+                    and desired_disk.interface is defined
+                    and desired_disk.interface is not none
+                    and desired_disk.interface is string
+                    and desired_disk.interface | length > 0
+                    and desired_disk.datastore_id is defined
+                    and desired_disk.datastore_id is not none
+                    and desired_disk.datastore_id is string
+                    and desired_disk.datastore_id | length > 0
+                  ) -%}
+      {%-         set live_datastore = namespace(value=none) -%}
+      {%-         if (
+                    live_guest.value is mapping
+                    and live_guest.value.live_disks is defined
+                    and live_guest.value.live_disks is sequence
+                    and live_guest.value.live_disks is not string
+                    and live_guest.value.live_disks is not mapping
+                  ) -%}
+      {%-           for live_disk in live_guest.value.live_disks -%}
+      {%-             if live_disk is mapping and live_disk.interface | default(none) == desired_disk.interface -%}
+      {%-               set live_datastore.value = live_disk.datastore | default(none) -%}
+      {%-             endif -%}
+      {%-           endfor -%}
+      {%-         endif -%}
+      {%-         set found = (
+                    live_datastore.value
+                    if live_datastore.value is string and live_datastore.value | length > 0
+                    else 'none'
+                  ) -%}
+      {%-         if found != desired_disk.datastore_id -%}
+      {%-           set _ = failures.append(
+                        'Storage-pool preflight failed for ' ~ name ~ '/'
+                        ~ desired_disk.interface ~ ': expected '
+                        ~ desired_disk.datastore_id ~ ', found ' ~ found
+                      ) -%}
+      {%-         endif -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ failures }}
+
+- name: Fail when pre-flight data or policy checks fail
+  ansible.builtin.fail:
+    msg: "{{ (preflight_data_failures + preflight_policy_failures) | join('\n') }}"
+  when: (preflight_data_failures + preflight_policy_failures) | length > 0

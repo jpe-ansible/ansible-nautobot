@@ -1,0 +1,34 @@
+---
+argument_specs:
+  main:
+    short_description: Check desired guest RAM and storage pools against Nautobot inventory.
+    options:
+      preflight_nautobot_url:
+        type: str
+        description: Base URL of the Nautobot API.
+      preflight_read_token:
+        type: str
+        description: Read-only Nautobot API token supplied by a secrets-store lookup.
+        no_log: true
+      preflight_skip_fetch:
+        type: bool
+        default: false
+        description: Use fixture or caller-provided inventory without making a GraphQL request.
+      preflight_nautobot_devices:
+        type: list
+        elements: dict
+        default: []
+        description: Device records containing name and cf_physical_ram_mb.
+      preflight_nautobot_guests:
+        type: list
+        elements: dict
+        default: []
+        description: Normalized guest records containing name, memory_mb, current_node, and live_disks.
+      preflight_desired_guests:
+        type: dict
+        default: {}
+        description: Desired guest map keyed by name, with node, memory_mb, and disks.
+      preflight_graphql_errors:
+        type: list
+        default: []
+        description: GraphQL errors preserved by the fetch task.

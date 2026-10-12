@@ -23,6 +23,10 @@ jobs:
     with:
       molecule: false
       molecule_scenario_filters: |
+        preflight:
+          - 'roles/preflight/**'
+          - 'roles/url_guard/**'
+          - 'molecule/preflight/**'
         url_guard:
           - 'roles/url_guard/**'
           - 'molecule/url_guard/**'

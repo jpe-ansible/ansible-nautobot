@@ -1,0 +1,7 @@
+---
+- name: Fetch Nautobot inventory for pre-flight evaluation
+  ansible.builtin.include_tasks: fetch.yml
+  when: not preflight_skip_fetch
+
+- name: Evaluate desired RAM and storage pools
+  ansible.builtin.include_tasks: evaluate.yml

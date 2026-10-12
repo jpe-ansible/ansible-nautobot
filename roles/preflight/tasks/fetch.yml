@@ -1,0 +1,62 @@
+---
+- name: Require an https Nautobot URL
+  ansible.builtin.include_role:
+    name: url_guard
+  vars:
+    url_guard_urls:
+      - {name: preflight_nautobot_url, url: "{{ preflight_nautobot_url }}"}
+
+- name: Query Nautobot capacity and live guest data
+  ansible.builtin.uri:
+    url: "{{ preflight_nautobot_url.rstrip('/') }}/api/graphql/"
+    method: POST
+    headers:
+      Authorization: "Token {{ preflight_read_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      query: >-
+        query {
+          devices {
+            name
+            cf_physical_ram_mb
+          }
+          virtual_machines {
+            name
+            memory
+            cf_current_node
+            cf_live_disks
+          }
+        }
+    validate_certs: true
+    return_content: true
+  register: preflight_graphql_response
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Normalize Nautobot GraphQL inventory for evaluation
+  ansible.builtin.set_fact:
+    preflight_nautobot_devices: >-
+      {{ preflight_graphql_response.json.data.devices | default([])
+         if preflight_graphql_response.json is defined and preflight_graphql_response.json is mapping else [] }}
+    preflight_nautobot_guests: >-
+      {%- set guests = [] -%}
+      {%- set source = preflight_graphql_response.json.data.virtual_machines | default([])
+          if preflight_graphql_response.json is defined and preflight_graphql_response.json is mapping else [] -%}
+      {%- for item in source -%}
+      {%-   set live_disks = item.cf_live_disks | default(none) -%}
+      {%-   set normalized_guest = {
+              'name': item.name | default(none),
+              'memory_mb': (item.memory | int) if item.memory is defined and item.memory is not none else none,
+              'current_node': item.cf_current_node | default(none),
+              'live_disks': (live_disks | from_json) if live_disks is string else live_disks
+            } -%}
+      {%-   set _ = guests.append(normalized_guest) -%}
+      {%- endfor -%}
+      {{ guests }}
+    preflight_graphql_errors: >-
+      {{ ((preflight_graphql_response.json.errors | default([], true))
+          if preflight_graphql_response.json is defined and preflight_graphql_response.json is mapping else [])
+         + (['GraphQL request failed'] if (preflight_graphql_response.status | default(0) | int != 200
+            or preflight_graphql_response.failed | default(false)) else []) }}
