@@ -1,0 +1,10 @@
+---
+- name: Reject a credentialed URL that is neither https nor loopback http
+  ansible.builtin.assert:
+    that:
+      - item.url is match(url_guard_allowed_regex)
+    fail_msg: "{{ item.name }} must be an https URL; http is accepted only for a loopback host."
+    quiet: true
+  loop: "{{ url_guard_urls }}"
+  loop_control:
+    label: "{{ item.name }}"

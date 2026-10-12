@@ -1,0 +1,28 @@
+---
+- name: Verify the credentialed URL policy
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Accept https and loopback http URLs
+      ansible.builtin.include_role:
+        name: url_guard
+      vars:
+        url_guard_urls:
+          - {name: secure, url: "https://nautobot.example.test"}
+          - {name: secure_port, url: "https://nautobot.example.test:8443/base"}
+          - {name: loopback_v4, url: "http://127.0.0.1:8080"}
+          - {name: loopback_name, url: "http://localhost/"}
+          - {name: loopback_v6, url: "http://[::1]:8080"}
+
+    - name: Reject each URL that is not https or loopback http
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/reject_case.yml"
+      loop:
+        - {name: plain_http, url: "http://nautobot.example.test"}
+        - {name: other_scheme, url: "ftp://nautobot.example.test"}
+        - {name: loopback_prefix_host, url: "http://127.0.0.1.example.test/"}
+        - {name: loopback_name_suffix, url: "http://localhost.example.test"}
+        - {name: userinfo_trick, url: "http://localhost@nautobot.example.test/"}
+        - {name: empty, url: ""}
+      loop_control:
+        loop_var: case
+        label: "{{ case.name }}"
