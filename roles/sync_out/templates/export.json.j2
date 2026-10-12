@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0.0",
+  "vlans": [
+  {% for vlan in sync_out_query_response.json.data.vlans %}
+    {% set vlan_group = vlan.vlan_group %}
+    {"vid": {{ vlan.vid | to_json }}, "name": {{ vlan.name | to_json }}, "group": {{ (vlan_group.name if vlan_group is mapping else none) | to_json }}}{% if not loop.last %},{% endif %}
+  {% endfor %}
+  ],
+  "prefixes": [
+  {% for prefix in sync_out_query_response.json.data.prefixes %}
+    {"cidr": {{ prefix.prefix | to_json }}, "vlan": {{ ((prefix.vlan | default({}, true)).vid | default(none)) | to_json }}, "role": {{ ((prefix.role | default({}, true)).name | default(none)) | to_json }}}{% if not loop.last %},{% endif %}
+  {% endfor %}
+  ],
+  "ip_addresses": [
+  {% for address in sync_out_query_response.json.data.ip_addresses %}
+    {% set assignment = namespace(device=none, interface=none) %}
+    {% for device in sync_out_query_response.json.data.devices %}
+      {% for interface in device.interfaces %}
+        {% if assignment.interface is none and address.address in (interface.ip_addresses | map(attribute='address') | list) %}
+          {% set assignment.device = device.name %}
+          {% set assignment.interface = interface %}
+        {% endif %}
+      {% endfor %}
+    {% endfor %}
+    {"address": {{ address.address | to_json }}, "dns_name": {{ address.dns_name | default(none) | to_json }}, "mac": {{ (assignment.interface.mac_address | default(none)) | to_json }}, "assigned_interface": {% if assignment.interface is none %}null{% else %}{"device": {{ assignment.device | to_json }}, "name": {{ assignment.interface.name | to_json }}}{% endif %}}{% if not loop.last %},{% endif %}
+  {% endfor %}
+  ],
+  "devices": [
+  {% for device in sync_out_query_response.json.data.devices %}
+    {% set bmc = namespace(interface=none) %}
+    {% for interface in device.interfaces %}
+      {% if bmc.interface is none and (interface.mgmt_only | default(false) or (interface.name | default('') | lower) in ['bmc', 'idrac', 'ipmi']) %}
+        {% set bmc.interface = interface %}
+      {% endif %}
+    {% endfor %}
+    {"name": {{ device.name | to_json }}, "role": {{ ((device.role | default({}, true)).name | default(none)) | to_json }}, "rack": {{ ((device.rack | default({}, true)).name | default(none)) | to_json }}, "bmc": {% if bmc.interface is none or (bmc.interface.ip_addresses | default([]) | length == 0) %}null{% else %}{"address": {{ (bmc.interface.ip_addresses[0].address.split('/') | first) | to_json }}, "mac": {{ bmc.interface.mac_address | default(none) | to_json }}}{% endif %}}{% if not loop.last %},{% endif %}
+  {% endfor %}
+  ],
+  "racks": [
+  {% for rack in sync_out_query_response.json.data.racks %}
+    {"name": {{ rack.name | to_json }}, "site": {{ rack.location.name | to_json }}}{% if not loop.last %},{% endif %}
+  {% endfor %}
+  ],
+  "interfaces": [
+  {% for interface in sync_out_query_response.json.data.interfaces %}
+    {"name": {{ interface.name | to_json }}, "device": {{ interface.device.name | to_json }}, "mac": {{ interface.mac_address | default(none) | to_json }}, "mgmt_only": {{ interface.mgmt_only | to_json }}}{% if not loop.last %},{% endif %}
+  {% endfor %}
+  ]
+}

@@ -1,0 +1,175 @@
+---
+custom_field:
+  - label: Sync Source
+    description: Identifies the data flow that owns this object.
+    type: text
+    content_types:
+      - circuits.circuit
+      - circuits.provider
+      - dcim.device
+      - dcim.devicetype
+      - dcim.location
+      - dcim.module
+      - dcim.modulebay
+      - dcim.moduletype
+      - dcim.rack
+      - dcim.inventoryitem
+      - virtualization.virtualmachine
+      - virtualization.vminterface
+      - virtualization.cluster
+      - ipam.ipaddress
+  - label: Physical RAM MB
+    description: Physical device memory in mebibytes.
+    type: integer
+    content_types:
+      - dcim.device
+  - label: Current Node
+    description: Current source node for a virtual machine.
+    type: text
+    content_types:
+      - virtualization.virtualmachine
+  - label: Live Disks
+    description: Live disk list with interface and datastore values.
+    type: json
+    content_types:
+      - virtualization.virtualmachine
+  - label: VMID
+    description: Source virtual machine identifier.
+    type: integer
+    content_types:
+      - virtualization.virtualmachine
+  - label: Purchase Date
+    description: Procurement date for physical hardware.
+    type: date
+    grouping: Procurement
+    content_types:
+      - dcim.device
+      - dcim.module
+  - label: Purchase Price cents
+    description: Procurement price in cents.
+    type: integer
+    grouping: Procurement
+    content_types:
+      - dcim.device
+      - dcim.module
+  - label: Vendor
+    description: Procurement vendor.
+    type: text
+    grouping: Procurement
+    content_types:
+      - dcim.device
+      - dcim.module
+  - label: Receipt Ref
+    description: Procurement receipt reference.
+    type: text
+    grouping: Procurement
+    content_types:
+      - dcim.device
+      - dcim.module
+
+git_repository:
+  - name: Nautobot Bootstrap
+    url: https://github.com/jpe-ansible/ansible-nautobot.git
+    provided_data_type:
+      - config contexts
+
+graph_ql_query:
+  - name: nautobot-export
+    query: |
+      query {
+        vlans {
+          last_updated
+          vid
+          name
+          vlan_group {
+            name
+          }
+        }
+        prefixes {
+          last_updated
+          prefix
+          vlan {
+            vid
+          }
+          role {
+            name
+          }
+        }
+        ip_addresses {
+          last_updated
+          address
+          dns_name
+        }
+        devices {
+          last_updated
+          name
+          role {
+            name
+          }
+          rack {
+            name
+          }
+          interfaces {
+            name
+            mgmt_only
+            mac_address
+            ip_addresses {
+              address
+            }
+          }
+        }
+        racks {
+          last_updated
+          name
+          location {
+            name
+          }
+        }
+        interfaces {
+          last_updated
+          name
+          device {
+            name
+          }
+          mac_address
+          mgmt_only
+        }
+      }
+
+location_type:
+  - name: Site
+    nestable: true
+    content_types:
+      - dcim.device
+      - dcim.module
+      - dcim.rack
+      - ipam.prefix
+      - ipam.vlan
+
+location:
+  - name: homelab
+    location_type: Site
+    status: Active
+
+manufacturer:
+  - name: Generic
+
+secret:
+  - name: onboarding-username
+    provider: environment-variable
+    parameters:
+      variable: NAUTOBOT_ONBOARD_USERNAME
+  - name: onboarding-password
+    provider: environment-variable
+    parameters:
+      variable: NAUTOBOT_ONBOARD_PASSWORD
+
+secrets_group:
+  - name: device-onboarding
+    secrets:
+      - name: onboarding-username
+        secret_type: username
+        access_type: Generic
+      - name: onboarding-password
+        secret_type: password
+        access_type: Generic

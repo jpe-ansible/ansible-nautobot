@@ -1,0 +1,19 @@
+---
+preflight_skip_fetch: true
+preflight_fixture_devices:
+  - name: node-a
+    cf_physical_ram_mb: 8192
+preflight_fixture_guests:
+  - name: vm-fixture
+    memory_mb: 2048
+    current_node: node-a
+    live_disks:
+      - interface: scsi0
+        datastore: pool-a
+preflight_fixture_desired:
+  vm-fixture:
+    node: node-a
+    memory_mb: 2048
+    disks:
+      - interface: scsi0
+        datastore_id: pool-a

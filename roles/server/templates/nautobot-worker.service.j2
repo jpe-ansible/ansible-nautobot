@@ -1,0 +1,19 @@
+[Unit]
+# {{ ansible_managed }}
+Description=Nautobot Celery Worker
+After=network-online.target redis-server.service nautobot-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ server_user }}
+Group={{ server_group }}
+WorkingDirectory={{ server_root }}
+EnvironmentFile={{ server_root }}/nautobot.env
+Environment=NAUTOBOT_ROOT={{ server_root }}
+ExecStart={{ server_root }}/bin/nautobot-server celery worker --loglevel INFO --concurrency 2
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

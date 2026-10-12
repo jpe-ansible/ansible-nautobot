@@ -1,0 +1,35 @@
+---
+sync_in_racks: []
+sync_in_devices: []
+sync_in_hardware_devices: []
+sync_in_hardware_modules:
+  - hw_id: MODULE-A
+    quantity: 3
+    category: memory
+    manufacturer: Example
+    model: Memory Module
+    status: Active
+    location: rack-area
+    installed_in: device-a
+  - hw_id: MODULE-B
+    quantity: 2
+    category: network card
+    manufacturer: Example
+    model: Network Module
+    status: Active
+    location: rack-area
+    installed_in: device-a
+sync_in_wan_circuits: []
+sync_in_vlans: []
+sync_in_prefixes: []
+sync_in_reservations: []
+sync_in_curated_snapshot:
+  data:
+    devices:
+      - name: device-a
+    modules: []
+    module_bays: []
+    inventory_items: []
+    locations:
+      - name: site-a
+        parent: null

@@ -1,0 +1,45 @@
+---
+sync_in_racks: []
+sync_in_devices: []
+sync_in_hardware_devices: []
+sync_in_hardware_modules:
+  - hw_id: RAM-DROP
+    quantity: 1
+    category: memory
+    manufacturer: Example
+    model: Memory Module
+    status: Active
+    location: parts
+    installed_in: null
+sync_in_wan_circuits: []
+sync_in_vlans: []
+sync_in_prefixes: []
+sync_in_reservations: []
+sync_in_curated_snapshot:
+  data:
+    modules:
+      - id: module-1
+        asset_tag: RAM-DROP#1
+        custom_field_data: {sync_source: curated}
+        parent_module_bay: null
+      - id: module-2
+        asset_tag: RAM-DROP#2
+        custom_field_data: {sync_source: curated}
+        parent_module_bay: null
+      - id: module-3
+        asset_tag: RAM-DROP#3
+        custom_field_data: {sync_source: curated}
+        parent_module_bay: null
+      - id: module-other-owner
+        asset_tag: RAM-DROP#4
+        custom_field_data: {sync_source: hardware}
+        parent_module_bay: null
+    module_bays: []
+    inventory_items: []
+    devices: []
+    manufacturers:
+      - name: Example
+    roles: []
+    locations:
+      - name: site-a
+        parent: null

@@ -1,0 +1,369 @@
+---
+- name: Load node management fixtures
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/proxmox/node_management.yml"
+    name: sync_in_node_management_fixture
+
+- name: Set node management fixture inputs
+  ansible.builtin.set_fact:
+    sync_in_prune_max_fraction: "{{ sync_in_node_management_fixture.sync_in_prune_max_fraction }}"
+    sync_in_pve_components: "{{ sync_in_node_management_fixture.sync_in_pve_components }}"
+    sync_in_pve_node_info: "{{ sync_in_node_management_fixture.sync_in_pve_node_info }}"
+    sync_in_pve_vm_info: "{{ sync_in_node_management_fixture.sync_in_pve_vm_info }}"
+    sync_in_pve_disk_results: "{{ sync_in_node_management_fixture.sync_in_pve_disk_results }}"
+    sync_in_pve_node_map: "{{ sync_in_node_management_fixture.sync_in_pve_node_map }}"
+    sync_in_pve_nautobot_snapshot: "{{ sync_in_node_management_fixture.sync_in_pve_nautobot_snapshot }}"
+    sync_in_plan: {}
+
+- name: Transform mapped commissioned nodes
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+- name: Build mapped node management plan
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_plan.yml"
+
+- name: Assert mapped names, reservations, and commissioning behavior
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_node_records | map(attribute='name') | list == ['device-a', 'source-b']
+      - sync_in_pve_node_records | map(attribute='management_dns_name') | list == ['reservation-a', 'source-b']
+      - sync_in_pve_node_binding_records | map(attribute='address') | list == ['192.0.2.101/32', '192.0.2.102/32']
+      - sync_in_pve_node_unbound_nodes | length == 0
+      - >-
+        sync_in_pve_nodes_plan.create
+        | selectattr('object_kind', 'equalto', 'device_interface')
+        | selectattr('identifier', 'equalto', 'device-a/mgmt') | list | length == 1
+      - >-
+        sync_in_pve_nodes_plan.create
+        | selectattr('object_kind', 'equalto', 'device_interface_ip_address')
+        | selectattr('identifier', 'equalto', 'device-a/mgmt -> 192.0.2.101/32') | list | length == 1
+      - >-
+        sync_in_pve_nodes_plan.create
+        | selectattr('object_kind', 'equalto', 'device_interface_ip_address')
+        | selectattr('identifier', 'equalto', 'source-b/mgmt -> 192.0.2.102/32') | list | length == 1
+      - >-
+        sync_in_pve_nodes_plan['update']
+        | selectattr('object_kind', 'equalto', 'device')
+        | selectattr('identifier', 'equalto', 'device-a primary_ip4') | list | length == 1
+      - >-
+        sync_in_pve_nodes_plan['update']
+        | selectattr('object_kind', 'equalto', 'device')
+        | selectattr('identifier', 'equalto', 'source-b primary_ip4') | list | length == 1
+      - >-
+        sync_in_pve_nodes_plan['update']
+        | selectattr('object_kind', 'equalto', 'device')
+        | selectattr('identifier', 'equalto', 'source-b')
+        | map(attribute='changed_fields') | map('dict2items') | flatten | map(attribute='key')
+        | select('in', ['device_type', 'location', 'role']) | list | length == 0
+      - >-
+        sync_in_pve_node_device_updates
+        | selectattr('name', 'equalto', 'source-b') | list | length == 1
+      - >-
+        'device_type' not in sync_in_pve_node_device_updates[0]
+      - >-
+        'location' not in sync_in_pve_node_device_updates[0]
+      - >-
+        'role' not in sync_in_pve_node_device_updates[0]
+      - >-
+        sync_in_pve_nodes_plan.create
+        | map(attribute='identifier') | select('equalto', 'device-c') | list | length == 0
+      - >-
+        sync_in_pve_nodes_plan['update']
+        | map(attribute='identifier') | select('equalto', 'device-c') | list | length == 0
+      - >-
+        sync_in_pve_nodes_plan.create
+        | map(attribute='identifier') | select('equalto', 'device-c/mgmt') | list | length == 0
+      - sync_in_pve_prune_lists.devices | map(attribute='id') | list | difference(['device-c-id']) | length == 0
+      - sync_in_pve_transform_passed
+
+- name: Report mapped node management fixture result
+  ansible.builtin.debug:
+    msg: >-
+      FIXTURE PASS: device aliases, explicit and default DNS matching, interface association, primary IPv4,
+      curated Device fields, and uncommissioned skip
+
+- name: Mark device-a as owned by another flow to verify the Proxmox stage leaves its owner alone
+  ansible.builtin.set_fact:
+    sync_in_pve_nautobot_snapshot: >-
+      {%- set data = sync_in_node_management_fixture.sync_in_pve_nautobot_snapshot.data -%}
+      {%- set ns = namespace(devices=[]) -%}
+      {%- for device in data.devices -%}
+      {%- set owned = device | combine({'custom_field_data': device.custom_field_data
+          | combine({'sync_source': 'curated'})}) -%}
+      {%- set ns.devices = ns.devices + [owned if device.name == 'device-a' else device] -%}
+      {%- endfor -%}
+      {{ {'data': data | combine({'devices': ns.devices})} | to_json | from_json }}
+    sync_in_plan: {}
+
+- name: Transform and plan with a Device owned by another flow
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+- name: Build the plan with a Device owned by another flow
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_plan.yml"
+
+- name: Assert the Proxmox stage does not take over another flow's Device
+  ansible.builtin.assert:
+    that:
+      - >-
+        (sync_in_pve_node_device_updates | selectattr('name', 'equalto', 'device-a') | first)
+        .custom_fields | list == ['physical_ram_mb']
+      - >-
+        (sync_in_pve_node_device_updates | selectattr('name', 'equalto', 'source-b') | first)
+        .custom_fields | list == ['physical_ram_mb']
+      - >-
+        sync_in_pve_nodes_plan['update'] | selectattr('identifier', 'equalto', 'device-a')
+        | map(attribute='changed_fields') | map('dict2items') | flatten | map(attribute='key')
+        | select('equalto', 'custom_fields.sync_source') | list | length == 0
+    fail_msg: The Proxmox stage rewrote the ownership marker of an existing Device.
+
+- name: Remove the Active status to verify the status created for node management
+  ansible.builtin.set_fact:
+    sync_in_pve_nautobot_snapshot: >-
+      {{ sync_in_node_management_fixture.sync_in_pve_nautobot_snapshot
+         | combine({'data': {'statuses': []}}, recursive=true) }}
+
+- name: Assert the created status covers Devices and Interfaces
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_reference_creates.statuses | map(attribute='name') | list == ['Active']
+      - sync_in_pve_reference_creates.statuses[0].content_types == ['dcim.device', 'dcim.interface']
+
+- name: Keep one reservation to verify a single missing node is reported
+  ansible.builtin.set_fact:
+    sync_in_pve_nautobot_snapshot: >-
+      {{ sync_in_node_management_fixture.sync_in_pve_nautobot_snapshot
+         | combine({'data': {'ip_addresses':
+           [sync_in_node_management_fixture.sync_in_pve_nautobot_snapshot.data.ip_addresses[0]]}}, recursive=true) }}
+    sync_in_plan: {}
+
+- name: Transform and plan one missing node reservation
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+- name: Build plan with one missing node reservation
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_plan.yml"
+
+- name: Assert one missing reservation is reported without failure
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_transform_passed
+      - >-
+        sync_in_pve_nodes_plan['unbound_nodes'] == [
+          {'name': 'source-b', 'management_dns_name': 'source-b'}
+        ]
+
+- name: Report one missing node reservation result
+  ansible.builtin.debug:
+    msg: "FIXTURE PASS: one missing reservation is listed under unbound_nodes and the transform passes"
+
+- name: Remove all node reservations for the apply-mode failure check
+  ansible.builtin.set_fact:
+    sync_in_pve_nautobot_snapshot: >-
+      {{ sync_in_node_management_fixture.sync_in_pve_nautobot_snapshot
+         | combine({'data': {'ip_addresses': []}}, recursive=true) }}
+    sync_in_plan_only: false
+
+- name: Prove all missing node reservations fail in apply mode
+  block:
+    - name: Transform all missing node reservations in apply mode
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+    - name: Fail when all node reservations are missing in apply mode
+      ansible.builtin.fail:
+        msg: The all-missing node reservation guard accepted apply mode.
+  rescue:
+    - name: Assert the apply-mode all-missing message
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_failed_task['name'] == 'Reject all-missing Proxmox node management reservations'
+          - >-
+            ansible_failed_result['msg'] ==
+            'Proxmox node management binding failed: reservations missing for all 2 commissioned nodes'
+
+- name: Prove all missing node reservations fail in plan-only mode
+  block:
+    - name: Set plan-only mode for the all-missing reservation check
+      ansible.builtin.set_fact:
+        sync_in_plan_only: true
+
+    - name: Transform all missing node reservations in plan-only mode
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+    - name: Fail when all node reservations are missing in plan-only mode
+      ansible.builtin.fail:
+        msg: The all-missing node reservation guard accepted plan-only mode.
+  rescue:
+    - name: Assert the plan-only all-missing message
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_failed_task['name'] == 'Reject all-missing Proxmox node management reservations'
+          - >-
+            ansible_failed_result['msg'] ==
+            'Proxmox node management binding failed: reservations missing for all 2 commissioned nodes'
+
+- name: Load default node-name fixture
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/proxmox/live.yml"
+    name: sync_in_empty_node_map_fixture
+
+- name: Set empty node-map inputs
+  ansible.builtin.set_fact:
+    sync_in_pve_components: [nodes]
+    sync_in_pve_node_info: "{{ sync_in_empty_node_map_fixture.sync_in_pve_node_info }}"
+    sync_in_pve_vm_info: "{{ sync_in_empty_node_map_fixture.sync_in_pve_vm_info }}"
+    sync_in_pve_disk_results: "{{ sync_in_empty_node_map_fixture.sync_in_pve_disk_results }}"
+    sync_in_pve_node_map: []
+    sync_in_pve_nautobot_snapshot: "{{ sync_in_empty_node_map_fixture.sync_in_pve_nautobot_snapshot }}"
+    sync_in_plan: {}
+
+- name: Transform and plan with an empty node map
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+- name: Build the empty node-map plan
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_plan.yml"
+
+- name: Assert the empty node map keeps default names and adds binding
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_node_records | map(attribute='name') | list == ['node-a']
+      - sync_in_pve_node_binding_records[0].management_dns_name == 'node-a'
+      - sync_in_pve_node_binding_records[0].address == '192.0.2.99/32'
+      - sync_in_pve_nodes_plan['unbound_nodes'] | length == 0
+
+- name: Report empty node-map fixture result
+  ansible.builtin.debug:
+    msg: "FIXTURE PASS: empty node map preserves default Device names and binds their existing reservation"
+
+- name: Prove malformed node map input fails with the stable message
+  block:
+    - name: Set a node map entry without its required name
+      ansible.builtin.set_fact:
+        sync_in_known_stages: [bootstrap, proxmox, curated]
+        sync_in_stages: [proxmox]
+        sync_in_curated_components: [dcim, hardware]
+        sync_in_pve_components: [nodes]
+        sync_in_plan_only: true
+        sync_in_nautobot_url: https://example.invalid
+        sync_in_read_token: fixture-read-token
+        sync_in_pve_node_map:
+          - nautobot_device_name: device-a
+
+    - name: Validate the malformed node map input
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/validate_inputs.yml"
+
+    - name: Fail when a node map entry without a name is accepted
+      ansible.builtin.fail:
+        msg: The malformed node map input was accepted.
+  rescue:
+    - name: Assert the malformed node map validation message
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_failed_task['name'] == 'Validate Proxmox node map entries'
+          - >-
+            ansible_failed_result['results']
+            | selectattr('failed', 'defined') | selectattr('failed')
+            | map(attribute='msg') | list
+            == ['sync_in_pve_node_map entries require a name and valid optional values']
+
+- name: Restore the default node map after the malformed-input fixture
+  ansible.builtin.set_fact:
+    sync_in_pve_node_map: []
+
+- name: Load aliased node fixtures for drive and guest identity checks
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/proxmox/live.yml"
+    name: sync_in_renamed_node_fixture
+
+- name: Set a mapped Device name and an existing owned drive on it
+  ansible.builtin.set_fact:
+    sync_in_pve_components: [nodes, virtualization, drives]
+    sync_in_plan_only: true
+    sync_in_pve_node_map:
+      - name: node-a
+        nautobot_device_name: device-a
+        management_dns_name: node-a
+    sync_in_pve_nautobot_snapshot: >-
+      {{ sync_in_renamed_node_fixture.sync_in_pve_nautobot_snapshot
+         | combine({'data': {'inventory_items': [{
+           'id': 'drive-existing',
+           'name': 'Drive abcd1234',
+           'device': {'name': 'device-a'},
+           'custom_field_data': {'sync_source': 'proxmox'}
+         }] }}, recursive=true) }}
+    sync_in_pve_node_info: "{{ sync_in_renamed_node_fixture.sync_in_pve_node_info }}"
+    sync_in_pve_vm_info: "{{ sync_in_renamed_node_fixture.sync_in_pve_vm_info }}"
+    sync_in_pve_disk_results: "{{ sync_in_renamed_node_fixture.sync_in_pve_disk_results }}"
+    sync_in_plan: {}
+
+- name: Transform the aliased node, guest, and drive records
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+- name: Assert drive records target the mapped Device name
+  block:
+    - name: Check mapped drive targets
+      ansible.builtin.assert:
+        that:
+          - sync_in_pve_drive_records | map(attribute='device') | unique | list == ['device-a']
+        fail_msg: >-
+          M1 renamed-node drive-target assertion failed: expected device-a, got
+          {{ sync_in_pve_drive_records | map(attribute='device') | unique | list | to_json }}
+  rescue:
+    - name: Record the renamed-node drive-target regression
+      ansible.builtin.set_fact:
+        sync_in_pve_regression_failures: >-
+          {{ sync_in_pve_regression_failures
+             + [ansible_failed_result.msg | default(ansible_failed_result | to_json)] }}
+
+- name: Assert expected drive counts use mapped Device names
+  block:
+    - name: Check mapped drive counts
+      ansible.builtin.assert:
+        that:
+          - sync_in_pve_drive_expected_counts.keys() | list == ['device-a']
+          - sync_in_pve_drive_expected_counts.get('device-a', 0) | int == 2
+        fail_msg: >-
+          M1 renamed-node drive-count assertion failed: expected {"device-a":2}, got
+          {{ sync_in_pve_drive_expected_counts | to_json }}
+  rescue:
+    - name: Record the renamed-node drive-count regression
+      ansible.builtin.set_fact:
+        sync_in_pve_regression_failures: >-
+          {{ sync_in_pve_regression_failures
+             + [ansible_failed_result.msg | default(ansible_failed_result | to_json)] }}
+
+- name: Assert guest current_node uses the mapped Device name
+  block:
+    - name: Check mapped guest node
+      ansible.builtin.assert:
+        that:
+          - sync_in_pve_guest_records[0].custom_fields.current_node == 'device-a'
+        fail_msg: >-
+          M1 renamed-node current_node assertion failed: expected device-a, got
+          {{ sync_in_pve_guest_records[0].custom_fields.current_node }}
+  rescue:
+    - name: Record the renamed-node current_node regression
+      ansible.builtin.set_fact:
+        sync_in_pve_regression_failures: >-
+          {{ sync_in_pve_regression_failures
+             + [ansible_failed_result.msg | default(ansible_failed_result | to_json)] }}
+
+- name: Assert an existing drive on the mapped Device is not pruned
+  block:
+    - name: Check mapped drive prune selection
+      ansible.builtin.assert:
+        that:
+          - sync_in_pve_prune_lists.inventory_items | map(attribute='id') | list == []
+        fail_msg: >-
+          M1 renamed-node prune assertion failed: expected no stale drive selection, got
+          {{ sync_in_pve_prune_lists.inventory_items | map(attribute='id') | list | to_json }}
+  rescue:
+    - name: Record the renamed-node prune regression
+      ansible.builtin.set_fact:
+        sync_in_pve_regression_failures: >-
+          {{ sync_in_pve_regression_failures
+             + [ansible_failed_result.msg | default(ansible_failed_result | to_json)] }}
+
+- name: Restore the default node map after aliased node checks
+  ansible.builtin.set_fact:
+    sync_in_pve_node_map: []

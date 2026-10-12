@@ -1,0 +1,20 @@
+---
+- name: Reconcile the server role service accounts
+  ansible.builtin.include_role:
+    name: server
+    tasks_from: accounts
+  vars:
+    server_nautobot_url: "{{ live_nautobot_url }}"
+    server_nautobot_validate_certs: true
+    server_ui_fqdn: example.invalid
+    server_superuser_name: test-admin
+    server_superuser_password: "{{ live_superuser_password }}"
+    server_openbao_addr: "{{ live_openbao_addr }}"
+    server_openbao_mount: "{{ live_openbao_mount }}"
+    server_openbao_token: "{{ live_openbao_root_token }}"
+    server_openbao_ca_file: "{{ live_openbao_ca_file }}"
+    server_inventory_token_path: "{{ live_service_account_secrets.inventory.path }}"
+    server_mcp_token_path: "{{ live_service_account_secrets.mcp.path }}"
+    server_pipeline_token_path: "{{ live_service_account_secrets.pipeline.path }}"
+    server_write_token_path: "{{ live_service_account_secrets.writer.path }}"
+  no_log: true

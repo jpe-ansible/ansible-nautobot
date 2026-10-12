@@ -1,0 +1,146 @@
+---
+- name: Read the guest before its source node changes
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/graphql/"
+    method: POST
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      query: |
+        query {
+          virtual_machines {
+            id name cluster { name } custom_field_data: _custom_field_data
+            interfaces { id name ip_addresses { id address } }
+          }
+        }
+    status_code: 200
+    return_content: true
+  register: live_guest_migration_before_graphql
+  no_log: true
+
+- name: Select the guest identity and attachments before migration
+  ansible.builtin.set_fact:
+    live_guest_migration_before: >-
+      {{ live_guest_migration_before_graphql.json.data.virtual_machines
+         | selectattr('name', 'equalto', 'guest-1') | first }}
+
+- name: Assert the source guest is ready for a migration check
+  ansible.builtin.assert:
+    that:
+      - live_guest_migration_before_graphql.json.errors | default([]) | length == 0
+      - >-
+        live_guest_migration_before_graphql.json.data.virtual_machines
+        | selectattr('name', 'equalto', 'guest-1') | list | length == 1
+      - live_guest_migration_before.cluster.name == 'node-a'
+      - live_guest_migration_before.custom_field_data.vmid == 101
+      - live_guest_migration_before.interfaces | length == 2
+      - >-
+        live_guest_migration_before.interfaces | map(attribute='ip_addresses') | flatten
+        | map(attribute='address') | sort
+        == ['192.0.2.10/32', '198.51.100.20/32', '198.51.100.40/32']
+    fail_msg: "the guest migration check did not find the original guest identity and address"
+
+- name: Verify the owned guest moves in place and remains idempotent
+  block:
+    - name: Load the migrated guest mock responses
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/fixtures/proxmox/migrated/api2/json/"
+        dest: "{{ live_state_dir }}/proxmox/api2/json/"
+        mode: "0644"
+        directory_mode: "0755"
+
+    - name: Synchronize the migrated guest
+      ansible.builtin.include_tasks: run_guest_migration_sync.yml
+
+    - name: Read the migrated guest and its attachments
+      ansible.builtin.uri:
+        url: "{{ live_nautobot_url }}/api/graphql/"
+        method: POST
+        headers:
+          Authorization: "Token {{ live_test_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          query: |
+            query {
+              virtual_machines {
+                id name cluster { name } custom_field_data: _custom_field_data
+                interfaces { id name ip_addresses { id address } }
+              }
+            }
+        status_code: 200
+        return_content: true
+      register: live_guest_migration_after_graphql
+      no_log: true
+
+    - name: Select the guest after its source node changes
+      ansible.builtin.set_fact:
+        live_guest_migration_after: >-
+          {{ live_guest_migration_after_graphql.json.data.virtual_machines
+             | selectattr('name', 'equalto', 'guest-1') | first }}
+
+    - name: Assert the plan and Nautobot preserve the moved guest
+      ansible.builtin.assert:
+        that:
+          - live_guest_migration_after_graphql.json.errors | default([]) | length == 0
+          - >-
+            live_guest_migration_after_graphql.json.data.virtual_machines
+            | selectattr('name', 'equalto', 'guest-1') | list | length == 1
+          - live_guest_migration_after.id == live_guest_migration_before.id
+          - live_guest_migration_after.custom_field_data.vmid == live_guest_migration_before.custom_field_data.vmid
+          - live_guest_migration_after.cluster.name == 'node-b'
+          - live_guest_migration_after.custom_field_data.current_node == 'node-b'
+          - >-
+            live_guest_migration_after.interfaces | map(attribute='id') | sort
+            == live_guest_migration_before.interfaces | map(attribute='id') | sort
+          - >-
+            live_guest_migration_after.interfaces | map(attribute='ip_addresses') | flatten
+            | map(attribute='address') | sort
+            == live_guest_migration_before.interfaces | map(attribute='ip_addresses') | flatten
+            | map(attribute='address') | sort
+          - >-
+            sync_in_plan.virtualization['update']
+            | selectattr('object_kind', 'equalto', 'virtual_machine')
+            | selectattr('identifier', 'search', 'guest-1') | list | length == 1
+          - >-
+            (sync_in_plan.virtualization['update']
+             | selectattr('object_kind', 'equalto', 'virtual_machine')
+             | selectattr('identifier', 'search', 'guest-1') | first).changed_fields.cluster
+            == {'old': 'node-a', 'new': 'node-b'}
+          - >-
+            sync_in_plan.virtualization.create
+            | selectattr('object_kind', 'equalto', 'virtual_machine') | list | length == 0
+        fail_msg: "the sync did not move the owned guest in place with its interfaces and addresses"
+
+    - name: Synchronize the migrated guest a second time
+      ansible.builtin.include_tasks: run_guest_migration_sync.yml
+
+    - name: Assert the second plan and VirtualMachine module results are unchanged
+      ansible.builtin.assert:
+        that:
+          - sync_in_plan.nodes.create | length == 0
+          - sync_in_plan.nodes['update'] | length == 0
+          - sync_in_plan.nodes.delete | length == 0
+          - sync_in_plan.virtualization.create | length == 0
+          - sync_in_plan.virtualization['update'] | length == 0
+          - sync_in_plan.virtualization.delete | length == 0
+          - sync_in_plan.drives.create | length == 0
+          - sync_in_plan.drives['update'] | length == 0
+          - sync_in_plan.drives.delete | length == 0
+          - sync_in_pve_vm_sync_results.results | selectattr('changed') | list | length == 0
+          - not live_guest_migration_second_sync.changed | default(false)
+        fail_msg: "the immediate second sync planned or applied changes"
+  always:
+    - name: Remove the temporary node-b QEMU mock response
+      ansible.builtin.file:
+        path: "{{ live_state_dir }}/proxmox/api2/json/nodes/node-b/qemu"
+        state: absent
+
+    - name: Restore the original Proxmox API mock responses
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/fixtures/proxmox/api/"
+        dest: "{{ live_state_dir }}/proxmox/"
+        mode: "0644"
+        directory_mode: "0755"

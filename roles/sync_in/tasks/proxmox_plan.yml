@@ -1,0 +1,352 @@
+---
+- name: Build the node family plan
+  ansible.builtin.set_fact:
+    sync_in_pve_nodes_plan: >-
+      {%- set data = sync_in_pve_snapshot_data -%}
+      {%- set out = namespace(create=[], update=[], delete=[]) -%}
+      {%- for wanted in sync_in_pve_reference_creates.statuses -%}
+      {%- set out.create = out.create + [{'object_kind': 'status', 'identifier': wanted.name}] -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_pve_reference_creates.roles
+          if wanted.name == sync_in_pve_node_role_name -%}
+      {%- set out.create = out.create + [{'object_kind': 'role', 'identifier': wanted.name}] -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_pve_reference_creates.cluster_types -%}
+      {%- set out.create = out.create + [{'object_kind': 'cluster_type', 'identifier': wanted.name}] -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_pve_reference_creates.manufacturers
+          if wanted.name == sync_in_pve_manufacturer_name -%}
+      {%- set out.create = out.create + [{'object_kind': 'manufacturer', 'identifier': wanted.name}] -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_pve_reference_creates.device_types -%}
+      {%- set out.create = out.create + [{
+        'object_kind': 'device_type',
+        'identifier': wanted.manufacturer ~ '/' ~ wanted.model
+      }] -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_pve_cluster_records -%}
+      {%- set current = data.clusters | selectattr('name', 'equalto', wanted.name) | list | first | default({}) -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{'object_kind': 'cluster', 'identifier': wanted.name}] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- if current.custom_field_data.sync_source | default('') != wanted.custom_fields.sync_source -%}
+      {%- set fields.value = fields.value | combine({'custom_fields.sync_source': {
+        'old': current.custom_field_data.sync_source | default(none),
+        'new': wanted.custom_fields.sync_source
+      }}) -%}
+      {%- endif -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'cluster', 'identifier': wanted.name, 'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_pve_node_records -%}
+      {%- set current = data.devices | selectattr('name', 'equalto', wanted.name) | list | first | default({}) -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{'object_kind': 'device', 'identifier': wanted.name}] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- if current.custom_field_data.physical_ram_mb | default(none) != wanted.custom_fields.physical_ram_mb -%}
+      {%- set fields.value = fields.value | combine({'custom_fields.physical_ram_mb': {
+        'old': current.custom_field_data.physical_ram_mb | default(none),
+        'new': wanted.custom_fields.physical_ram_mb
+      }}) -%}
+      {%- endif -%}
+      {%- if current.status.name | default('') != sync_in_pve_status_name -%}
+      {%- set fields.value = fields.value | combine({'status': {
+        'old': current.status.name | default(none), 'new': sync_in_pve_status_name
+      }}) -%}
+      {%- endif -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'device', 'identifier': wanted.name, 'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for binding in sync_in_pve_node_binding_records -%}
+      {%- set interface_id = binding.name ~ '/mgmt' -%}
+      {%- if not binding.interface_exists -%}
+      {%- set out.create = out.create + [{
+        'object_kind': 'device_interface', 'identifier': interface_id
+      }] -%}
+      {%- endif -%}
+      {%- if binding.address and not binding.association_exists -%}
+      {%- set out.create = out.create + [{
+        'object_kind': 'device_interface_ip_address',
+        'identifier': interface_id ~ ' -> ' ~ binding.address
+      }] -%}
+      {%- endif -%}
+      {%- if binding.address and binding.current_primary_ip4 != binding.address -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'device',
+        'identifier': binding.name ~ ' primary_ip4',
+        'changed_fields': {'primary_ip4': {
+          'old': binding.current_primary_ip4 | default(none), 'new': binding.address
+        }}
+      }] -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for item in sync_in_pve_prune_lists.clusters -%}
+      {%- set out.delete = out.delete + [{
+        'object_kind': 'cluster', 'identifier': item.name
+      }] -%}
+      {%- endfor -%}
+      {%- for item in sync_in_pve_prune_lists.devices -%}
+      {%- set out.delete = out.delete + [{'object_kind': 'device', 'identifier': item.name}] -%}
+      {%- endfor -%}
+      {{ {
+        'create': out.create,
+        'update': out.update,
+        'delete': out.delete,
+        'unbound_nodes': sync_in_pve_node_unbound_nodes
+      } | to_json | from_json }}
+  when: "'nodes' in sync_in_pve_components"
+
+- name: Build the virtualization family plan
+  ansible.builtin.set_fact:
+    sync_in_pve_virtualization_plan: >-
+      {%- set data = sync_in_pve_snapshot_data -%}
+      {%- set out = namespace(create=[], update=[], delete=[], adoptions=[]) -%}
+      {%- for wanted in sync_in_pve_reference_creates.statuses -%}
+      {%- set out.create = out.create + [{'object_kind': 'status', 'identifier': wanted.name}] -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_pve_reference_creates.roles
+          if wanted.name == sync_in_pve_vm_role_name -%}
+      {%- set out.create = out.create + [{'object_kind': 'role', 'identifier': wanted.name}] -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_pve_reference_creates.tags -%}
+      {%- set out.create = out.create + [{'object_kind': 'tag', 'identifier': wanted.name}] -%}
+      {%- endfor -%}
+      {%- for match in sync_in_pve_vm_name_matches -%}
+      {%- set wanted = match.guest -%}
+      {%- if match.matches | length == 0 -%}
+      {%- set out.create = out.create + [{
+        'object_kind': 'virtual_machine',
+        'identifier': wanted.name ~ ' (VMID ' ~ wanted.vmid ~ ')'
+      }] -%}
+      {%- else -%}
+      {%- set current = match.matches[0] -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- for key in wanted.custom_fields -%}
+      {%- if current.custom_field_data[key] | default(none) != wanted.custom_fields[key] -%}
+      {%- set fields.value = fields.value | combine({('custom_fields.' ~ key): {
+        'old': current.custom_field_data[key] | default(none), 'new': wanted.custom_fields[key]
+      }}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- if current.cluster.name | default('') != wanted.cluster -%}
+      {%- set fields.value = fields.value | combine({'cluster': {
+        'old': current.cluster.name | default(none), 'new': wanted.cluster
+      }}) -%}
+      {%- endif -%}
+      {%- if current.role.name | default('') != wanted.role -%}
+      {%- set fields.value = fields.value | combine({'role': {
+        'old': current.role.name | default(none), 'new': wanted.role
+      }}) -%}
+      {%- endif -%}
+      {%- if current.status.name | default('') != wanted.status -%}
+      {%- set fields.value = fields.value | combine({'status': {
+        'old': current.status.name | default(none), 'new': wanted.status
+      }}) -%}
+      {%- endif -%}
+      {%- for key in ['vcpus', 'memory', 'disk'] -%}
+      {%- if wanted[key] | int > 0 and current[key] | default(none) | int != wanted[key] | int -%}
+      {%- set fields.value = fields.value | combine({key: {
+        'old': current[key] | default(none), 'new': wanted[key]
+      }}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- set wanted_tags = wanted.tags | sort -%}
+      {%- set current_tags = current.tags | default([]) | map(attribute='name') | list | sort -%}
+      {%- if current_tags != wanted_tags -%}
+      {%- set fields.value = fields.value | combine({'tags': {'old': current_tags, 'new': wanted_tags}}) -%}
+      {%- endif -%}
+      {%- set current_primary = current.primary_ip4.address | default('') -%}
+      {%- if current_primary != wanted.primary_ip4 -%}
+      {%- set fields.value = fields.value | combine({'primary_ip4': {
+        'old': current_primary, 'new': wanted.primary_ip4
+      }}) -%}
+      {%- endif -%}
+      {%- set out.adoptions = out.adoptions + [{
+        'object_kind': 'virtual_machine',
+        'match': 'exact_name',
+        'existing_object': {'id': current.id, 'name': current.name},
+        'live_vmid': wanted.vmid,
+        'live_cluster': wanted.cluster,
+        'changed_fields': fields.value
+      }] -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'virtual_machine',
+        'identifier': wanted.name ~ ' (VMID ' ~ wanted.vmid ~ ')',
+        'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_pve_interface_records -%}
+      {%- set vm = (data.virtual_machines | selectattr('name', 'equalto', wanted.virtual_machine)
+          | list | first | default({})) -%}
+      {%- set current = (vm.interfaces | default([]) | selectattr('name', 'equalto', wanted.name)
+          | list | first | default({})) -%}
+      {%- set identifier = wanted.virtual_machine ~ ':' ~ wanted.name -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{'object_kind': 'vm_interface', 'identifier': identifier}] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- for key in ['mac_address', 'enabled'] -%}
+      {%- if current[key] | default(none) != wanted[key] -%}
+      {%- set fields.value = fields.value | combine({key: {
+        'old': current[key] | default(none), 'new': wanted[key]
+      }}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- if current.status.name | default('') != sync_in_pve_status_name -%}
+      {%- set fields.value = fields.value | combine({'status': {
+        'old': current.status.name | default(none), 'new': sync_in_pve_status_name
+      }}) -%}
+      {%- endif -%}
+      {%- for key in wanted.custom_fields | default({}) -%}
+      {%- if current.custom_field_data[key] | default(none) != wanted.custom_fields[key] -%}
+      {%- set fields.value = fields.value | combine({('custom_fields.' ~ key): {
+        'old': current.custom_field_data[key] | default(none), 'new': wanted.custom_fields[key]
+      }}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'vm_interface', 'identifier': identifier, 'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- set wanted_ips = wanted.ip_addresses | map(attribute='ip_address') | list | sort -%}
+      {%- set current_ips = current.ip_addresses | default([]) | map(attribute='address') | list | sort -%}
+      {%- if wanted.ip_addresses_state == 'merge' -%}
+      {%- set wanted_ips = (current_ips + wanted_ips) | unique | list | sort -%}
+      {%- endif -%}
+      {%- if wanted_ips != current_ips -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'vm_interface_ip_association',
+        'identifier': identifier,
+        'changed_fields': {'ip_addresses': {'old': current_ips, 'new': wanted_ips}}
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_pve_ip_records -%}
+      {%- set current = (data.ip_addresses | selectattr('address', 'equalto', wanted.address)
+          | list | first | default({})) -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{'object_kind': 'ip_address', 'identifier': wanted.address}] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- if current.status.name | default('') != sync_in_pve_status_name -%}
+      {%- set fields.value = fields.value | combine({'status': {
+        'old': current.status.name | default(none), 'new': sync_in_pve_status_name
+      }}) -%}
+      {%- endif -%}
+      {%- if current.custom_field_data.sync_source | default('') != wanted.custom_fields.sync_source -%}
+      {%- set fields.value = fields.value | combine({'custom_fields.sync_source': {
+        'old': current.custom_field_data.sync_source | default(none), 'new': wanted.custom_fields.sync_source
+      }}) -%}
+      {%- endif -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'ip_address', 'identifier': wanted.address, 'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for item in sync_in_pve_prune_lists.virtual_machines -%}
+      {%- set out.delete = out.delete + [{
+        'object_kind': 'virtual_machine',
+        'identifier': item.name ~ ' (VMID ' ~ (item.custom_field_data.vmid | default('unknown')) ~ ')'
+      }] -%}
+      {%- endfor -%}
+      {%- for item in sync_in_pve_prune_lists.vm_interfaces -%}
+      {%- set parent = namespace(name='unknown') -%}
+      {%- for vm in data.virtual_machines -%}
+      {%- if vm.interfaces | selectattr('id', 'equalto', item.id) | list | length > 0 -%}
+      {%- set parent.name = vm.name -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- set out.delete = out.delete + [{
+        'object_kind': 'vm_interface',
+        'identifier': parent.name ~ ':' ~ item.name
+      }] -%}
+      {%- endfor -%}
+      {%- for item in sync_in_pve_prune_lists.ip_addresses -%}
+      {%- set out.delete = out.delete + [{'object_kind': 'ip_address', 'identifier': item.address}] -%}
+      {%- endfor -%}
+      {{ {
+        'create': out.create, 'update': out.update, 'delete': out.delete, 'adoptions': out.adoptions
+      } | to_json | from_json }}
+  when: "'virtualization' in sync_in_pve_components"
+
+- name: Build the drives family plan
+  ansible.builtin.set_fact:
+    sync_in_pve_drives_plan: >-
+      {%- set data = sync_in_pve_snapshot_data -%}
+      {%- set out = namespace(create=[], update=[], delete=[]) -%}
+      {%- for wanted in sync_in_pve_reference_creates.manufacturers
+          if 'nodes' not in sync_in_pve_components or wanted.name != sync_in_pve_manufacturer_name -%}
+      {%- set out.create = out.create + [{'object_kind': 'manufacturer', 'identifier': wanted.name}] -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_pve_drive_records -%}
+      {%- set current = data.inventory_items
+          | selectattr('name', 'equalto', wanted.name)
+          | selectattr('device.name', 'equalto', wanted.device) | list | first | default({}) -%}
+      {%- set identifier = wanted.device ~ ':' ~ wanted.name ~ ' (serial '
+          ~ (wanted.identity | default('unknown')) ~ ')' -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{'object_kind': 'inventory_item', 'identifier': identifier}] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- for pair in [
+          ['serial', wanted.serial], ['part_id', wanted.part_id], ['description', wanted.description],
+          ['discovered', wanted.discovered], ['manufacturer', wanted.manufacturer]
+        ] -%}
+      {%- set actual = (current.manufacturer | default({}, true)).name | default(none)
+          if pair[0] == 'manufacturer' else current[pair[0]] | default(none) -%}
+      {%- if actual != pair[1] -%}
+      {%- set fields.value = fields.value | combine({pair[0]: {'old': actual, 'new': pair[1]}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- if current.custom_field_data.sync_source | default('') != wanted.custom_fields.sync_source -%}
+      {%- set fields.value = fields.value | combine({'custom_fields.sync_source': {
+        'old': current.custom_field_data.sync_source | default(none), 'new': wanted.custom_fields.sync_source
+      }}) -%}
+      {%- endif -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'inventory_item', 'identifier': identifier, 'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for item in sync_in_pve_prune_lists.inventory_items -%}
+      {%- set out.delete = out.delete + [{
+        'object_kind': 'inventory_item',
+        'identifier': item.device.name | default('unknown') ~ ':' ~ item.name ~ ' (serial '
+          ~ (item.serial | default('unknown')) ~ ')'
+      }] -%}
+      {%- endfor -%}
+      {{ {
+        'create': out.create, 'update': out.update, 'delete': out.delete,
+        'expected_counts': sync_in_pve_drive_expected_counts
+      } | to_json | from_json }}
+  when: "'drives' in sync_in_pve_components"
+
+- name: Merge selected Proxmox family plans
+  ansible.builtin.set_fact:
+    sync_in_plan: >-
+      {{ sync_in_plan
+         | combine({'nodes': sync_in_pve_nodes_plan}
+           if 'nodes' in sync_in_pve_components else {}, recursive=true, list_merge='append')
+         | combine({'virtualization': sync_in_pve_virtualization_plan}
+           if 'virtualization' in sync_in_pve_components else {}, recursive=true, list_merge='append')
+         | combine({'drives': sync_in_pve_drives_plan}
+           if 'drives' in sync_in_pve_components else {}, recursive=true, list_merge='append') }}

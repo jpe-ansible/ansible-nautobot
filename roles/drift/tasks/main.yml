@@ -1,0 +1,9 @@
+---
+- name: Fetch drift inputs
+  ansible.builtin.include_tasks: fetch.yml
+
+- name: Evaluate drift
+  ansible.builtin.include_tasks: evaluate.yml
+
+- name: Report drift
+  ansible.builtin.include_tasks: report.yml

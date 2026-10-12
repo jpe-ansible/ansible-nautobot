@@ -1,0 +1,186 @@
+---
+server_root: /opt/nautobot
+server_user: nautobot
+server_group: nautobot
+server_system_packages:
+  - python3
+  - python3-venv
+  - python3-dev
+  - python3-packaging
+  - build-essential
+  - libpq-dev
+  - redis-server
+  - git
+  - openssl
+  - sudo
+
+# renovate: datasource=pypi depName=nautobot
+server_version: "3.2.6"
+# renovate: datasource=pypi depName=nautobot-ssot
+server_ssot_version: "4.7.0"
+# renovate: datasource=pypi depName=nautobot-device-onboarding
+server_device_onboarding_version: "5.6.0"
+server_pip_packages:
+  - "nautobot=={{ server_version }}"
+  - "nautobot-ssot[bootstrap]=={{ server_ssot_version }}"
+  - "nautobot-device-onboarding=={{ server_device_onboarding_version }}"
+server_plugins:
+  - nautobot_ssot
+  - nautobot_device_onboarding
+server_bootstrap_environment_branch: develop
+server_bootstrap_models_to_sync:
+  custom_field: true
+  git_repository: true
+  tag: true
+  location_type: true
+  location: true
+  manufacturer: true
+  role: false
+  provider: true
+  circuit_type: true
+  circuit: true
+  vlan: true
+  prefix: true
+
+server_web_port: 8080
+server_web_bind: 127.0.0.1
+server_uwsgi_processes: 3
+server_uwsgi_threads: 2
+
+server_db_host: localhost
+server_db_port: 5432
+server_db_name: nautobot
+server_db_user: nautobot
+server_db_password: ""
+
+server_redis_host: localhost
+server_redis_port: 6379
+
+server_ui_fqdn: nautobot.example.test
+server_allowed_hosts:
+  - "{{ server_ui_fqdn }}"
+  - localhost
+server_trust_proxy_ssl_header: true
+server_nautobot_url: "https://{{ server_ui_fqdn }}"
+server_nautobot_validate_certs: true
+server_manage_app: true
+server_manage_accounts: true
+
+server_secret_key: ""
+server_secret_key_file: "{{ server_root }}/.secret_key"
+server_secret_key_path: nautobot
+server_secret_key_field: secret_key
+server_env:
+  NAUTOBOT_ROOT: "{{ server_root }}"
+  NAUTOBOT_DB_PASSWORD: "{{ server_db_password }}"
+
+server_superuser_name: admin
+server_superuser_email: "admin@{{ server_ui_fqdn }}"
+server_superuser_password: ""
+
+# OpenBao KV v2 is accessed from the controller. The CA file and token must be
+# supplied by the caller whenever the managed application block runs.
+server_openbao_addr: ""
+server_openbao_mount: secret
+
+server_inventory_username: svc-inventory-ro
+server_inventory_token_path: nautobot
+server_inventory_token_key: inventory_ro_token
+server_inventory_url_key: inventory_url
+server_inventory_object_types:
+  - dcim.device
+  - ipam.ipaddress
+  - extras.tag
+
+server_mcp_username: svc-mcp-ro
+server_mcp_token_path: nautobot/mcp
+server_mcp_token_key: NAUTOBOT_MCP_TOKEN
+server_mcp_url_key: NAUTOBOT_MCP_URL
+server_mcp_object_types:
+  - dcim.device
+  - dcim.interface
+  - dcim.location
+  - dcim.rack
+  - ipam.ipaddress
+  - ipam.prefix
+  - ipam.vlan
+  - virtualization.virtualmachine
+  - extras.tag
+
+server_pipeline_username: svc-pipeline-ro
+server_pipeline_token_path: nautobot/pipeline
+server_pipeline_token_key: pipeline_ro_token
+server_pipeline_url_key: pipeline_url
+server_pipeline_object_types:
+  - dcim.device
+  - dcim.interface
+  - dcim.location
+  - dcim.module
+  - dcim.moduletype
+  - dcim.rack
+  - extras.graphqlquery
+  - extras.role
+  - extras.tag
+  - ipam.ipaddress
+  - ipam.prefix
+  - ipam.vlan
+  - ipam.vlangroup
+  - circuits.circuit
+  - circuits.provider
+  - virtualization.virtualmachine
+
+server_bootstrap_repository_name: Nautobot Bootstrap
+server_bootstrap_job_name: Bootstrap to Nautobot
+
+server_write_username: svc-sync-write
+server_write_token_path: nautobot/sync-write
+server_write_token_key: sync_write_token
+server_write_url_key: sync_write_url
+server_write_object_types:
+  - circuits.circuit
+  - circuits.provider
+  - dcim.device
+  - dcim.devicetype
+  - dcim.interface
+  - dcim.location
+  - dcim.module
+  - dcim.modulebay
+  - dcim.moduletype
+  - dcim.rack
+  - dcim.inventoryitem
+  - ipam.ipaddress
+  - ipam.ipaddresstointerface
+  - ipam.prefix
+  - ipam.vlan
+  - virtualization.cluster
+  - virtualization.virtualmachine
+  - virtualization.vminterface
+server_write_delete_types:
+  - dcim.device
+  - dcim.inventoryitem
+  - dcim.module
+  - dcim.modulebay
+  - ipam.ipaddress
+  - virtualization.cluster
+  - virtualization.virtualmachine
+  - virtualization.vminterface
+# Shared reference objects the sync creates when absent but never deletes.
+server_write_reference_types:
+  - dcim.manufacturer
+  - dcim.platform
+  - extras.role
+  - extras.status
+  - extras.tag
+  - virtualization.clustertype
+# Objects the sync only looks up; they must already exist.
+server_write_lookup_types:
+  - circuits.circuittype
+  - dcim.locationtype
+  - ipam.namespace
+
+# The superuser token that reconciles accounts expires on its own if a run is killed.
+server_temporary_token_description: server-role-temporary
+server_temporary_token_minutes: 15
+
+server_local_requirements_file: "{{ server_root }}/local_requirements.txt"
+server_web_answer_url: "http://localhost:{{ server_web_port }}/"

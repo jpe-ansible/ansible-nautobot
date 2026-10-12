@@ -1,0 +1,68 @@
+---
+- name: Load the shared Bootstrap GraphQL query definition
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/../../../../global_settings.yml"
+    name: live_export_global_settings
+
+- name: Fetch the saved Bootstrap query through sync_out
+  ansible.builtin.include_role:
+    name: sync_out
+    tasks_from: fetch.yml
+    public: true
+  vars:
+    sync_out_nautobot_url: "{{ live_nautobot_url }}"
+    sync_out_read_token: "{{ live_service_account_values.pipeline.token }}"
+    sync_out_query_name: >-
+      {{ live_export_global_settings.graph_ql_query
+         | selectattr('name', 'equalto', 'nautobot-export') | map(attribute='name') | first }}
+  no_log: true
+
+- name: Transform the live GraphQL response through sync_out
+  ansible.builtin.include_role:
+    name: sync_out
+    tasks_from: transform.yml
+    public: true
+  vars:
+    sync_out_nautobot_url: "{{ live_nautobot_url }}"
+    sync_out_read_token: "{{ live_service_account_values.pipeline.token }}"
+    sync_out_query_name: >-
+      {{ live_export_global_settings.graph_ql_query
+         | selectattr('name', 'equalto', 'nautobot-export') | map(attribute='name') | first }}
+  no_log: true
+
+- name: Fetch the pinned export contract schema
+  ansible.builtin.uri:
+    url: "{{ sync_out_contract_schema_url }}"
+    return_content: true
+    status_code: 200
+  register: live_export_contract_schema
+  changed_when: false
+
+- name: Validate the live export document against the shared contract schema
+  ansible.utils.validate:
+    data: "{{ sync_out_document }}"
+    criteria: "{{ live_export_contract_schema.content | from_json }}"
+    engine: ansible.utils.jsonschema
+  register: live_export_contract_validation
+
+- name: Collect the live guest count and guest-assigned addresses
+  ansible.builtin.set_fact:
+    live_export_guest_count: "{{ live_graphql_removed.json.data.virtual_machines | length }}"
+    live_export_guest_addresses: >-
+      {{ live_graphql_removed.json.data.virtual_machines
+         | map(attribute='interfaces') | flatten
+         | map(attribute='ip_addresses') | flatten
+         | map(attribute='address') | unique | list }}
+
+- name: Assert the export validates and includes every live guest address
+  ansible.builtin.assert:
+    that:
+      - live_export_contract_validation is succeeded
+      - sync_out_document.schema_version == '1.0.0'
+      - live_export_guest_count | int > 0
+      - live_export_guest_addresses | length > 0
+      - >-
+        live_export_guest_addresses
+        | difference(sync_out_document.ip_addresses | map(attribute='address') | list)
+        | length == 0
+    fail_msg: The live export failed its schema or guest-address assertions.

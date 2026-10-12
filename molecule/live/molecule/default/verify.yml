@@ -1,0 +1,157 @@
+---
+- name: Verify live sync and preflight behavior
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Load live scenario variables
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/vars/live.yml"
+
+    - name: Load shared Nautobot Bootstrap settings
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../global_settings.yml"
+        name: live_global_settings
+
+    - name: Load ephemeral service endpoints
+      ansible.builtin.include_vars:
+        file: "{{ live_state_dir }}/endpoints.yml"
+
+    - name: Load generated scenario credentials from container configuration
+      ansible.builtin.include_tasks: tasks/load_live_container_config.yml
+
+    - name: Load service account tokens from the scenario secret store
+      ansible.builtin.include_tasks: tasks/load_live_service_secrets.yml
+
+    - name: Verify SECRET_KEY persistence and OpenBao versioning
+      ansible.builtin.include_tasks: tasks/verify_server_secret_key.yml
+
+    - name: Load the REST-created adoption identity and references
+      ansible.builtin.include_vars:
+        file: "{{ live_state_dir }}/adoption.yml"
+
+    - name: Verify service account permissions and token hygiene
+      ansible.builtin.include_tasks: tasks/verify_service_accounts.yml
+
+    - name: Verify Proxmox and curated objects were written
+      ansible.builtin.include_tasks: tasks/verify_initial.yml
+
+    - name: Verify manual and live addresses on adopted and owned interfaces
+      ansible.builtin.include_tasks: tasks/verify_adopted_interface_address.yml
+
+    - name: Verify curated Rack and Device placement
+      ansible.builtin.include_tasks: tasks/verify_curated_dcim.yml
+
+    - name: Verify the curated circuit provider, type and status
+      ansible.builtin.include_tasks: tasks/verify_curated_circuits.yml
+
+    - name: Verify VirtualMachine adoption and rejection cases
+      ansible.builtin.include_tasks: tasks/verify_adoption.yml
+
+    - name: Verify an owned VirtualMachine migrates between nodes
+      ansible.builtin.include_tasks: tasks/verify_guest_migration.yml
+
+    - name: Restore the original guest placement for the remaining scenario checks
+      ansible.builtin.include_role:
+        name: sync_in
+      vars:
+        sync_in_stages: [proxmox]
+        sync_in_pve_components: [virtualization, nodes, drives]
+        sync_in_pve_node_map: "{{ live_pve_node_map }}"
+        sync_in_nautobot_url: "{{ live_nautobot_url }}"
+        sync_in_read_token: "{{ live_test_token }}"
+        sync_in_write_token: "{{ live_test_token }}"
+        sync_in_pve_api_url: "{{ live_proxmox_api_url }}"
+        sync_in_pve_token_id: "{{ live_pve_token_id }}"
+        sync_in_pve_token_secret: "{{ live_pve_token_secret }}"
+        sync_in_pve_ca_path: "{{ live_state_dir }}/tls/ca.crt"
+        sync_in_pve_api_timeout: 10
+        sync_in_prune_max_fraction: 0.5
+      no_log: true
+
+    - name: Verify missing curated Circuit Type rejection
+      ansible.builtin.include_tasks: tasks/verify_curated_missing_type.yml
+
+    - name: Verify foreign address ownership and interface association
+      ansible.builtin.include_tasks: tasks/verify_foreign_address.yml
+
+    - name: Verify Proxmox node management binding and commissioning
+      ansible.builtin.include_tasks: tasks/verify_node_management.yml
+
+    - name: Remove one guest and drive from mock inputs
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/fixtures/proxmox/removed/"
+        dest: "{{ live_state_dir }}/proxmox/"
+        mode: "0644"
+
+    - name: Verify plan-only synchronization
+      ansible.builtin.include_tasks: tasks/verify_plan_only.yml
+
+    - name: Reconcile the reduced Proxmox and curated inputs
+      ansible.builtin.include_role:
+        name: sync_in
+      vars:
+        sync_in_stages:
+          - proxmox
+          - curated
+        sync_in_pve_node_map: "{{ live_pve_node_map }}"
+        sync_in_racks: "{{ live_curated_racks }}"
+        sync_in_devices: "{{ live_curated_devices }}"
+        sync_in_wan_circuits: "{{ live_curated_wan_circuits }}"
+        sync_in_hardware_modules: "{{ [live_curated_module | combine({'quantity': 1})] }}"
+        sync_in_nautobot_url: "{{ live_nautobot_url }}"
+        sync_in_read_token: "{{ live_service_account_values.writer.token }}"
+        sync_in_write_token: "{{ live_service_account_values.writer.token }}"
+        sync_in_pve_api_url: "{{ live_proxmox_api_url }}"
+        sync_in_pve_token_id: "{{ live_pve_token_id }}"
+        sync_in_pve_token_secret: "{{ live_pve_token_secret }}"
+        sync_in_pve_ca_path: "{{ live_state_dir }}/tls/ca.crt"
+        sync_in_pve_api_timeout: 10
+        sync_in_prune_max_fraction: 0.5
+      no_log: true
+
+    - name: Verify live removals and the unowned control object
+      ansible.builtin.include_tasks: tasks/verify_removed.yml
+
+    - name: Fetch normalized inventory through the preflight role
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: fetch.yml
+      vars:
+        preflight_nautobot_url: "{{ live_nautobot_url }}"
+        preflight_read_token: "{{ live_service_account_values.pipeline.token }}"
+
+    - name: Assert preflight GraphQL and normalized custom fields
+      ansible.builtin.assert:
+        that:
+          - preflight_graphql_errors | length == 0
+          - preflight_nautobot_devices | length == 3
+          - preflight_nautobot_guests | length == 2
+          - >-
+            (preflight_nautobot_guests | selectattr('name', 'equalto', 'guest-1') | first).current_node
+            == 'mapped-node-a'
+          - >-
+            (preflight_nautobot_guests | selectattr('name', 'equalto', 'guest-1') | first).memory_mb
+            == 4096
+          - >-
+            (preflight_nautobot_guests | selectattr('name', 'equalto', 'guest-1') | first).live_disks
+            == [{'interface': 'scsi0', 'datastore': 'fast'}]
+          - >-
+            (preflight_nautobot_guests | selectattr('name', 'equalto', 'guest-2') | first).current_node
+            == 'mapped-node-a'
+          - >-
+            (preflight_nautobot_guests | selectattr('name', 'equalto', 'guest-2') | first).memory_mb
+            == 2048
+          - >-
+            (preflight_nautobot_guests | selectattr('name', 'equalto', 'guest-2') | first).live_disks
+            == []
+        fail_msg: "preflight GraphQL custom fields or normalized guests did not match the live Nautobot records"
+
+    - name: Verify the live pre-flight gate
+      ansible.builtin.include_tasks: tasks/verify_preflight.yml
+
+    - name: Verify live export transformation and contract
+      ansible.builtin.include_tasks: tasks/verify_export.yml
+
+    - name: Verify live drift events
+      ansible.builtin.include_tasks: tasks/verify_drift.yml

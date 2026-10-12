@@ -1,0 +1,1 @@
+{"data":[{"vmid":102,"name":"guest-2","status":"stopped","template":0,"maxcpu":1,"maxmem":2147483648,"maxdisk":10737418240},{"vmid":301,"name":"guest-template","status":"stopped","template":1,"maxcpu":1,"maxmem":1073741824,"maxdisk":5368709120}]}

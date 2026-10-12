@@ -1,0 +1,23 @@
+---
+- name: Validate sync_in stage and connection inputs
+  ansible.builtin.import_tasks: validate_inputs.yml
+
+- name: Initialize the synchronization plan
+  ansible.builtin.set_fact:
+    sync_in_plan: {}
+
+- name: Run the Bootstrap stage
+  ansible.builtin.include_tasks: bootstrap_main.yml
+  when: "'bootstrap' in sync_in_stages"
+
+- name: Run the Proxmox stage
+  ansible.builtin.include_tasks: proxmox_main.yml
+  when: "'proxmox' in sync_in_stages"
+
+- name: Run the curated stage
+  ansible.builtin.include_tasks: curated_main.yml
+  when: "'curated' in sync_in_stages"
+
+- name: Report the synchronization plan
+  ansible.builtin.include_tasks: plan_summary.yml
+  when: sync_in_plan_only or ansible_check_mode

@@ -1,0 +1,33 @@
+---
+- name: Prove a curated circuit rejects an unprovisioned Circuit Type
+  block:
+    - name: Plan a curated circuit with a missing type
+      ansible.builtin.include_role:
+        name: sync_in
+      vars:
+        sync_in_stages: [curated]
+        sync_in_curated_components: [hardware]
+        sync_in_plan_only: true
+        sync_in_wan_circuits:
+          - circuit_id: WAN-MISSING-TYPE
+            provider: Example Provider
+            circuit_type: Unprovisioned Type
+            priority: 1
+            status: Active
+            description: Missing circuit type test
+        sync_in_nautobot_url: "{{ live_nautobot_url }}"
+        sync_in_read_token: "{{ live_service_account_values.writer.token }}"
+      no_log: true
+
+    - name: Fail when the missing Circuit Type is accepted
+      ansible.builtin.fail:
+        msg: The curated stage accepted a circuit with a missing Circuit Type.
+  rescue:
+    - name: Assert the missing Circuit Type error names the circuit and type
+      ansible.builtin.assert:
+        that:
+          - >-
+            "sync_in curated circuit 'WAN-MISSING-TYPE' requires missing Circuit Type
+            'Unprovisioned Type'; provision it in Nautobot before applying circuits."
+            in (ansible_failed_result | to_json)
+        fail_msg: The missing Circuit Type error did not identify the circuit and required type.

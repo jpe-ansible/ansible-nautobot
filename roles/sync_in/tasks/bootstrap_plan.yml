@@ -1,0 +1,121 @@
+---
+- name: Require the Bootstrap branch to match its data definition
+  ansible.builtin.assert:
+    that:
+      - sync_in_bootstrap_branch == sync_in_bootstrap_source_branch
+    fail_msg: "sync_in_bootstrap_branch must match the default Git Repository branch in develop.yml."
+
+- name: Check required Bootstrap inputs
+  ansible.builtin.assert:
+    that:
+      - sync_in_bootstrap_repo_url is defined
+      - sync_in_bootstrap_repo_url | length > 0
+      - sync_in_bootstrap_repo_name is search('Bootstrap', ignorecase=true)
+    fail_msg: Bootstrap URL and a repository name containing Bootstrap are required.
+
+- name: Build the desired Bootstrap repository record
+  ansible.builtin.set_fact:
+    sync_in_bootstrap_desired_repository:
+      name: "{{ sync_in_bootstrap_repo_name }}"
+      remote_url: "{{ sync_in_bootstrap_repo_url }}"
+      branch: "{{ sync_in_bootstrap_branch }}"
+      provided_contents:
+        - extras.configcontext
+
+- name: Find exact Bootstrap repository and job matches
+  ansible.builtin.set_fact:
+    sync_in_bootstrap_repository_matches: >-
+      {{ sync_in_bootstrap_repository_response.json.results | default([])
+         | selectattr('name', 'equalto', sync_in_bootstrap_repo_name) | list }}
+    sync_in_bootstrap_job_matches: >-
+      {{ sync_in_bootstrap_job_response.json.results | default([])
+         | selectattr('name', 'equalto', sync_in_bootstrap_job_name) | list }}
+
+- name: Reject duplicate Bootstrap repository records
+  ansible.builtin.fail:
+    msg: "Multiple Bootstrap repositories found: {{ sync_in_bootstrap_repo_name }}"
+  when: sync_in_bootstrap_repository_matches | length > 1
+
+- name: Reject a missing Bootstrap job
+  ansible.builtin.fail:
+    msg: "Bootstrap job not found: {{ sync_in_bootstrap_job_name }}"
+  when: sync_in_bootstrap_job_matches | length == 0
+
+- name: Reject duplicate Bootstrap jobs
+  ansible.builtin.fail:
+    msg: "Multiple Bootstrap jobs found: {{ sync_in_bootstrap_job_name }}"
+  when: sync_in_bootstrap_job_matches | length > 1
+
+- name: Select current Bootstrap repository and job records
+  ansible.builtin.set_fact:
+    sync_in_bootstrap_existing_repository: "{{ sync_in_bootstrap_repository_matches | first | default({}) }}"
+    sync_in_bootstrap_job: "{{ sync_in_bootstrap_job_matches | first }}"
+
+- name: Plan the Bootstrap repository operation
+  ansible.builtin.set_fact:
+    sync_in_bootstrap_repo_action: >-
+      {{ 'create' if sync_in_bootstrap_repository_matches | length == 0 else
+         'unchanged' if (
+           sync_in_bootstrap_existing_repository.remote_url == sync_in_bootstrap_repo_url and
+           sync_in_bootstrap_existing_repository.branch == sync_in_bootstrap_branch and
+           sync_in_bootstrap_existing_repository.provided_contents == ['extras.configcontext']
+         ) else 'update' }}
+    sync_in_bootstrap_repo_id: "{{ sync_in_bootstrap_existing_repository.id | default(none) }}"
+    sync_in_bootstrap_job_id: "{{ sync_in_bootstrap_job.id }}"
+    sync_in_bootstrap_job_enabled: "{{ sync_in_bootstrap_job.enabled | default(false) | bool }}"
+
+- name: Reject an unsuccessful Bootstrap repository sync
+  ansible.builtin.fail:
+    msg: >-
+      Bootstrap repository sync finished with status
+      {{ sync_in_bootstrap_sync_result.status | default('UNKNOWN') }}
+  when:
+    - sync_in_bootstrap_sync_result is defined
+    - sync_in_bootstrap_sync_result.status | default('UNKNOWN') != 'SUCCESS'
+
+- name: Reject an unsuccessful Bootstrap job result
+  ansible.builtin.fail:
+    msg: >-
+      Bootstrap job finished with status
+      {{ sync_in_bootstrap_final_job_result.status | default('UNKNOWN') }}
+  when:
+    - sync_in_bootstrap_final_job_result is defined
+    - sync_in_bootstrap_final_job_result.status | default('UNKNOWN') != 'SUCCESS'
+
+- name: Add the Bootstrap operations to the plan
+  ansible.builtin.set_fact:
+    sync_in_plan: >-
+      {{ (sync_in_plan | default({})) | combine({
+        'bootstrap': {
+          'create': ([{
+            'object_kind': 'git_repository',
+            'identifier': sync_in_bootstrap_repo_name
+          }] if sync_in_bootstrap_repo_action == 'create' else []),
+          'update': ([{
+            'object_kind': 'git_repository',
+            'identifier': sync_in_bootstrap_repo_name,
+            'changed_fields': {
+              'remote_url': {
+                'old': sync_in_bootstrap_existing_repository.remote_url | default(''),
+                'new': sync_in_bootstrap_repo_url
+              },
+              'branch': {
+                'old': sync_in_bootstrap_existing_repository.branch | default(''),
+                'new': sync_in_bootstrap_branch
+              },
+              'provided_contents': {
+                'old': sync_in_bootstrap_existing_repository.provided_contents | default([]),
+                'new': ['extras.configcontext']
+              }
+            }
+          }] if sync_in_bootstrap_repo_action == 'update' else []) +
+          ([{
+            'object_kind': 'bootstrap_job',
+            'identifier': sync_in_bootstrap_job_name,
+            'changed_fields': {'enabled': {'old': false, 'new': true}}
+          }] if not sync_in_bootstrap_job_enabled else []),
+          'delete': [],
+          'delete_reported': false
+        }
+      }, recursive=true) }}
+  when: sync_in_plan_only or ansible_check_mode

@@ -1,0 +1,50 @@
+---
+- name: Run live inbound-sync stages
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Load live scenario variables
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/vars/live.yml"
+
+    - name: Load shared Nautobot Bootstrap settings
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../global_settings.yml"
+        name: live_global_settings
+
+    - name: Load ephemeral service endpoints
+      ansible.builtin.include_vars:
+        file: "{{ live_state_dir }}/endpoints.yml"
+
+    - name: Load generated scenario credentials from container configuration
+      ansible.builtin.include_tasks: tasks/load_live_container_config.yml
+
+    - name: Reconcile service accounts in the scenario secret store
+      ansible.builtin.include_tasks: tasks/run_server_accounts.yml
+
+    - name: Load service account tokens from the scenario secret store
+      ansible.builtin.include_tasks: tasks/load_live_service_secrets.yml
+
+    - name: Include inbound-sync role for live Proxmox and curated inputs
+      ansible.builtin.include_role:
+        name: sync_in
+      vars:
+        sync_in_stages:
+          - proxmox
+          - curated
+        sync_in_pve_node_map: "{{ live_pve_node_map }}"
+        sync_in_racks: "{{ live_curated_racks }}"
+        sync_in_devices: "{{ live_curated_devices }}"
+        sync_in_wan_circuits: "{{ live_curated_wan_circuits }}"
+        sync_in_hardware_modules: "{{ [live_curated_module | combine({'quantity': 2})] }}"
+        sync_in_nautobot_url: "{{ live_nautobot_url }}"
+        sync_in_read_token: "{{ live_service_account_values.writer.token }}"
+        sync_in_write_token: "{{ live_service_account_values.writer.token }}"
+        sync_in_pve_api_url: "{{ live_proxmox_api_url }}"
+        sync_in_pve_token_id: "{{ live_pve_token_id }}"
+        sync_in_pve_token_secret: "{{ live_pve_token_secret }}"
+        sync_in_pve_ca_path: "{{ live_state_dir }}/tls/ca.crt"
+        sync_in_pve_api_timeout: 10
+        sync_in_prune_max_fraction: 0.5
+      no_log: true

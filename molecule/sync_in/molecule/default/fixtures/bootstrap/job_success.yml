@@ -1,0 +1,12 @@
+---
+sync_in_bootstrap_repository_response:
+  json:
+    results: []
+sync_in_bootstrap_job_response:
+  json:
+    results:
+      - id: job-bootstrap
+        name: Bootstrap to Nautobot
+        enabled: true
+sync_in_bootstrap_final_job_result:
+  status: SUCCESS

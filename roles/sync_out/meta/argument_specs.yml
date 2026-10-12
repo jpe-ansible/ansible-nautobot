@@ -1,0 +1,21 @@
+---
+argument_specs:
+  main:
+    short_description: Export Nautobot data to consumers.
+    options:
+      sync_out_nautobot_url:
+        type: str
+        required: true
+      sync_out_read_token:
+        type: str
+        required: true
+        no_log: true
+      sync_out_query_name:
+        type: str
+        required: true
+      sync_out_object_storage_bucket:
+        type: str
+        required: true
+      sync_out_object_storage_key:
+        type: str
+        default: nautobot/nautobot_export.json

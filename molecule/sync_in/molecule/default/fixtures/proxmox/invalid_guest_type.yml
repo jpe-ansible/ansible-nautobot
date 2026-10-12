@@ -1,0 +1,11 @@
+---
+sync_in_pve_vm_info:
+  proxmox_vms:
+    - vmid: 206
+      name: invalid-type
+      node: node-a
+      template: false
+      status: running
+      maxcpu: 1
+      maxmem: 1073741824
+      config: {}

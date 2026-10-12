@@ -1,0 +1,85 @@
+---
+sync_in_pve_nautobot_snapshot:
+  data:
+    devices:
+      - id: device-1
+        name: node-a
+        primary_ip4: null
+        interfaces: []
+        custom_field_data:
+          sync_source: proxmox
+    inventory_items:
+      - id: drive-1
+        name: Drive abcd1234
+        device:
+          name: node-a
+        custom_field_data:
+          sync_source: proxmox
+      - id: drive-2
+        name: Drive 5000000000000002
+        device:
+          name: node-a
+        custom_field_data:
+          sync_source: proxmox
+    virtual_machines:
+      - id: vm-1
+        name: guest-a
+        cluster:
+          id: cluster-1
+          name: node-a
+        custom_field_data:
+          sync_source: proxmox
+          vmid: 101
+        interfaces:
+          - id: interface-1
+            name: net0
+            custom_field_data:
+              sync_source: proxmox
+    ip_addresses:
+      - id: ip-1
+        address: 192.0.2.10/32
+        dns_name: guest-a
+        interfaces: []
+        custom_field_data:
+          sync_source: proxmox
+      - id: node-reservation
+        address: 192.0.2.99/32
+        dns_name: node-a
+        interfaces: []
+        custom_field_data:
+          sync_source: curated
+    prefixes:
+      - prefix: 192.0.2.0/24
+        namespace:
+          name: Global
+    clusters:
+      - id: cluster-1
+        name: node-a
+        custom_field_data:
+          sync_source: proxmox
+    statuses:
+      - id: status-1
+        name: Active
+    roles:
+      - id: role-1
+        name: pve-node
+      - id: role-2
+        name: vm
+    tags:
+      - id: tag-1
+        name: app
+      - id: tag-2
+        name: test
+    cluster_types:
+      - id: cluster-type-1
+        name: Proxmox
+    manufacturers:
+      - id: manufacturer-1
+        name: Acme
+      - id: manufacturer-2
+        name: Generic
+    device_types:
+      - id: device-type-1
+        model: pve-node
+        manufacturer:
+          name: Generic

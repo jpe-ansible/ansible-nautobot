@@ -1,0 +1,104 @@
+---
+- name: Select the adopted guest interface snapshot
+  ansible.builtin.set_fact:
+    live_adopted_interface_initial_guest: "{{ live_initial_guest_1 }}"
+
+- name: Assert the manual address and live address are attached to the unowned interface
+  ansible.builtin.assert:
+    that:
+      - live_graphql_initial.json.errors | default([]) | length == 0
+      - >-
+        (live_adopted_interface_initial_guest.interfaces
+         | selectattr('name', 'equalto', 'net0') | first)
+        .custom_field_data.sync_source | default('', true) == ''
+      - >-
+        (live_adopted_interface_initial_guest.interfaces
+         | selectattr('name', 'equalto', 'net0') | map(attribute='ip_addresses') | flatten
+         | map(attribute='address') | sort)
+        == ['192.0.2.10/32', '198.51.100.40/32']
+      - >-
+        (live_adopted_interface_initial_guest.interfaces
+         | selectattr('name', 'equalto', 'net1') | first)
+        .custom_field_data.sync_source == 'proxmox'
+    fail_msg: The adopted interface did not retain its manual address and add the live address.
+
+- name: Verify owned address removal and idempotence on adopted guest interfaces
+  block:
+    - name: Remove the owned secondary address from the Proxmox mock
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/fixtures/proxmox/no-secondary-ip/api2/json/nodes/node-a/qemu/101/config.json"
+        dest: "{{ live_state_dir }}/proxmox/api2/json/nodes/node-a/qemu/101/config.json"
+        mode: "0644"
+
+    - name: Synchronize after the owned secondary address leaves the source
+      ansible.builtin.include_tasks: run_adopted_interface_sync.yml
+
+    - name: Read interfaces after removing the owned secondary address
+      ansible.builtin.uri:
+        url: "{{ live_nautobot_url }}/api/graphql/"
+        method: POST
+        headers:
+          Authorization: "Token {{ live_test_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          query: |
+            query {
+              virtual_machines {
+                name interfaces {
+                  name custom_field_data: _custom_field_data ip_addresses { address }
+                }
+              }
+            }
+        status_code: 200
+        return_content: true
+      register: live_adopted_interface_removed_graphql
+      no_log: true
+
+    - name: Select the adopted guest after removing the owned address
+      ansible.builtin.set_fact:
+        live_adopted_interface_removed_guest: >-
+          {{ live_adopted_interface_removed_graphql.json.data.virtual_machines
+             | selectattr('name', 'equalto', 'guest-1') | first }}
+
+    - name: Assert the owned interface drops its address and the unowned interface keeps both
+      ansible.builtin.assert:
+        that:
+          - live_adopted_interface_removed_graphql.json.errors | default([]) | length == 0
+          - >-
+            (live_adopted_interface_removed_guest.interfaces
+             | selectattr('name', 'equalto', 'net0') | map(attribute='ip_addresses') | flatten
+             | map(attribute='address') | sort)
+            == ['192.0.2.10/32', '198.51.100.40/32']
+          - >-
+            (live_adopted_interface_removed_guest.interfaces
+             | selectattr('name', 'equalto', 'net1') | map(attribute='ip_addresses') | flatten
+             | map(attribute='address') | list | length) == 0
+          - >-
+            (live_adopted_interface_removed_guest.interfaces
+             | selectattr('name', 'equalto', 'net1') | first)
+            .custom_field_data.sync_source == 'proxmox'
+        fail_msg: The source removal did not clear the owned interface and preserve both unowned addresses.
+
+    - name: Repeat the virtualization sync after the source change
+      ansible.builtin.include_tasks: run_adopted_interface_sync.yml
+
+    - name: Assert the repeated sync reports zero changes
+      ansible.builtin.assert:
+        that:
+          - sync_in_plan.virtualization.create | length == 0
+          - sync_in_plan.virtualization['update'] | length == 0
+          - sync_in_plan.virtualization.delete | length == 0
+          - sync_in_pve_vm_sync_results.results | selectattr('changed') | list | length == 0
+          - sync_in_pve_vm_interface_sync_results.results | selectattr('changed') | list | length == 0
+          - not live_adopted_interface_second_sync.changed | default(false)
+        fail_msg: The repeated sync planned or applied interface changes after the source stabilized.
+  always:
+    - name: Restore the original guest network mock response
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/fixtures/proxmox/api/api2/json/nodes/node-a/qemu/101/config.json"
+        dest: "{{ live_state_dir }}/proxmox/api2/json/nodes/node-a/qemu/101/config.json"
+        mode: "0644"
+
+    - name: Synchronize the restored guest network so later checks start from the fixture state
+      ansible.builtin.include_tasks: run_adopted_interface_sync.yml

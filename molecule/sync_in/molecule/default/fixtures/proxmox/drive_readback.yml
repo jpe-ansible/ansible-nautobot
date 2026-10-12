@@ -1,0 +1,25 @@
+---
+sync_in_pve_drive_expected_counts:
+  node-a: 2
+  node-b: 1
+sync_in_pve_drive_readback:
+  data:
+    inventory_items:
+      - id: drive-a
+        name: Drive a
+        device:
+          name: node-a
+        custom_field_data:
+          sync_source: proxmox
+      - id: curated-a
+        name: Curated item
+        device:
+          name: node-a
+        custom_field_data:
+          sync_source: curated
+      - id: drive-b
+        name: Drive b
+        device:
+          name: node-b
+        custom_field_data:
+          sync_source: proxmox

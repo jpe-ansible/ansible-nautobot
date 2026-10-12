@@ -1,0 +1,16 @@
+---
+sync_in_bootstrap_repository_response:
+  json:
+    results:
+      - id: repository-bootstrap
+        name: Nautobot Bootstrap
+        remote_url: https://example.invalid/nautobot.git
+        branch: develop
+        provided_contents:
+          - extras.configcontext
+sync_in_bootstrap_job_response:
+  json:
+    results:
+      - id: job-bootstrap
+        name: Bootstrap to Nautobot
+        enabled: true

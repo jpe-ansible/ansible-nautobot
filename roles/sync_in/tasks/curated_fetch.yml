@@ -1,0 +1,11 @@
+---
+- name: Read Nautobot state for curated transforms
+  networktocode.nautobot.graphql_info:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_read_token }}"
+    validate_certs: true
+    query: "{{ sync_in_curated_graphql_query }}"
+  register: sync_in_curated_snapshot
+  no_log: true
+  changed_when: false
+  check_mode: false

@@ -1,0 +1,5 @@
+---
+- name: Clean up pre-flight fixture state
+  hosts: all
+  gather_facts: false
+  tasks: []

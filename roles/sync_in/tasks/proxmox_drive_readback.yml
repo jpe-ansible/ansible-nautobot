@@ -1,0 +1,21 @@
+---
+- name: Read persisted Proxmox drive inventory from Nautobot
+  networktocode.nautobot.graphql_info:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_read_token }}"
+    query: "{{ sync_in_pve_drive_readback_query }}"
+    validate_certs: true
+  register: sync_in_pve_drive_readback
+  changed_when: false
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+  when:
+    - not sync_in_plan_only
+    - not ansible_check_mode
+
+- name: Validate persisted drive inventory counts
+  ansible.builtin.include_tasks: proxmox_drive_readback_assert.yml
+  when:
+    - not sync_in_plan_only
+    - not ansible_check_mode

@@ -1,0 +1,21 @@
+---
+- name: Load curated synchronization rules
+  ansible.builtin.include_vars:
+    file: ../vars/curated.yml
+
+- name: Select curated records for the requested families
+  ansible.builtin.include_tasks: curated_select.yml
+
+- name: Read existing curated synchronization state
+  ansible.builtin.import_tasks: curated_fetch.yml
+
+- name: Transform curated input rows
+  ansible.builtin.import_tasks: curated_transform.yml
+
+- name: Build the curated synchronization plan
+  ansible.builtin.include_tasks: curated_plan.yml
+  when: sync_in_plan_only or ansible_check_mode
+
+- name: Apply curated input rows
+  ansible.builtin.import_tasks: curated_apply.yml
+  when: not sync_in_plan_only and not ansible_check_mode

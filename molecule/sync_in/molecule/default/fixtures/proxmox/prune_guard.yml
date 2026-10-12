@@ -1,0 +1,48 @@
+---
+sync_in_pve_prune_guard_fixture:
+  nodes:
+    - node: node-a
+      status: online
+      maxmem: 8589934592
+      maxcpu: 8
+  owned_vms:
+    - id: vm-1
+      name: guest-1
+      vmid: 101
+      interfaces: []
+      cluster:
+        id: cluster-a
+        name: node-a
+      custom_field_data:
+        sync_source: proxmox
+        vmid: 101
+    - id: vm-2
+      name: guest-2
+      vmid: 102
+      interfaces: []
+      cluster:
+        id: cluster-a
+        name: node-a
+      custom_field_data:
+        sync_source: proxmox
+        vmid: 102
+    - id: vm-3
+      name: guest-3
+      vmid: 103
+      interfaces: []
+      cluster:
+        id: cluster-a
+        name: node-a
+      custom_field_data:
+        sync_source: proxmox
+        vmid: 103
+  live_guest:
+    vmid: 101
+    name: guest-1
+    node: node-a
+    type: qemu
+    template: false
+    maxcpu: 1
+    maxmem: 1073741824
+    maxdisk: 1073741824
+    config: {}

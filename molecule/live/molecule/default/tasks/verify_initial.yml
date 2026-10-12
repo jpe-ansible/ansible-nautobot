@@ -1,0 +1,131 @@
+---
+- name: Read live collection REST resources
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/{{ item }}?limit=100"
+    method: GET
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+    status_code: 200
+    return_content: true
+  loop:
+    - api/dcim/devices/
+    - api/virtualization/virtual-machines/
+    - api/virtualization/interfaces/
+    - api/ipam/ip-addresses/
+    - api/dcim/inventory-items/
+  loop_control:
+    label: "{{ item }}"
+  register: live_rest_initial
+  no_log: true
+
+- name: Read live GraphQL ownership fields
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/graphql/"
+    method: POST
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      query: |
+        query {
+          devices { name custom_field_data: _custom_field_data }
+          virtual_machines {
+            name memory custom_field_data: _custom_field_data
+            interfaces {
+              name custom_field_data: _custom_field_data ip_addresses { address }
+            }
+          }
+          ip_addresses { address custom_field_data: _custom_field_data }
+          inventory_items { name device { name } custom_field_data: _custom_field_data }
+          modules { asset_tag custom_field_data: _custom_field_data }
+          module_types { model custom_field_data: _custom_field_data }
+          locations { name custom_field_data: _custom_field_data }
+          prefixes { prefix }
+        }
+    status_code: 200
+    return_content: true
+  register: live_graphql_initial
+  no_log: true
+
+- name: Select expected live guest records
+  ansible.builtin.set_fact:
+    live_initial_guest_1: >-
+      {{ live_graphql_initial.json.data.virtual_machines
+         | selectattr('name', 'equalto', 'guest-1') | first }}
+    live_initial_guest_3: >-
+      {{ live_graphql_initial.json.data.virtual_machines
+         | selectattr('name', 'equalto', 'guest-3') | first }}
+    live_initial_storage_location: >-
+      {{ live_graphql_initial.json.data.locations
+         | selectattr('name', 'equalto', 'storage') | first }}
+
+- name: Assert real Nautobot has the Proxmox and curated records
+  ansible.builtin.assert:
+    that:
+      - live_rest_initial.results[0].json.count == 3
+      - live_rest_initial.results[1].json.count == 3
+      - live_rest_initial.results[2].json.count == 4
+      - live_rest_initial.results[3].json.count == 7
+      - live_rest_initial.results[4].json.count == 4
+      - live_graphql_initial.json.errors | default([]) | length == 0
+      - live_graphql_initial.json.data.devices | length == 3
+      - >-
+        live_graphql_initial.json.data.devices
+        | selectattr('name', 'equalto', 'mapped-node-a') | list | length == 1
+      - live_graphql_initial.json.data.virtual_machines | length == 3
+      - >-
+        live_graphql_initial.json.data.virtual_machines | map(attribute='interfaces') | flatten | length == 4
+      - >-
+        live_graphql_initial.json.data.virtual_machines
+        | selectattr('name', 'equalto', 'guest-template') | list | length == 0
+      - >-
+        live_initial_guest_1.interfaces | selectattr('name', 'equalto', 'net0')
+        | map(attribute='ip_addresses') | flatten | map(attribute='address') | sort
+        == ['192.0.2.10/32', '198.51.100.40/32']
+      - >-
+        (live_initial_guest_1.interfaces | selectattr('name', 'equalto', 'net0') | first)
+        .custom_field_data.sync_source | default('', true) == ''
+      - >-
+        live_initial_guest_1.interfaces | selectattr('name', 'equalto', 'net1')
+        | map(attribute='ip_addresses') | flatten | map(attribute='address') | list
+        == ['198.51.100.20/32']
+      - >-
+        (live_initial_guest_1.interfaces | selectattr('name', 'equalto', 'net1') | first)
+        .custom_field_data.sync_source == 'proxmox'
+      - live_initial_guest_1.custom_field_data.current_node == 'mapped-node-a'
+      - >-
+        live_initial_guest_3.interfaces | map(attribute='ip_addresses') | flatten
+        | map(attribute='address') | list == ['198.51.100.30/32']
+      - >-
+        live_graphql_initial.json.data.prefixes | map(attribute='prefix') | list
+        | intersect(live_prefixes) | length == 2
+      - >-
+        (live_graphql_initial.json.data.ip_addresses
+         | selectattr('address', 'equalto', '192.0.2.10/32') | first).custom_field_data.sync_source
+        == 'proxmox'
+      - >-
+        (live_graphql_initial.json.data.inventory_items
+         | selectattr('name', 'search', 'Drive test-node') | list | length) == 4
+      - >-
+        (live_graphql_initial.json.data.inventory_items
+         | selectattr('name', 'search', 'Drive test-node-a-') | map(attribute='device.name')
+         | unique | list) == ['mapped-node-a']
+      - >-
+        live_graphql_initial.json.data.inventory_items
+        | selectattr('custom_field_data.sync_source', 'equalto', 'proxmox') | list | length == 4
+      - >-
+        live_graphql_initial.json.data.modules | map(attribute='asset_tag') | sort
+        == ['MODULE-LIVE#1', 'MODULE-LIVE#2']
+      - >-
+        live_graphql_initial.json.data.modules
+        | selectattr('custom_field_data.sync_source', 'equalto', 'curated') | list | length == 2
+      - >-
+        live_graphql_initial.json.data.module_types
+        | selectattr('custom_field_data.sync_source', 'equalto', 'curated') | list | length == 1
+      - >-
+        live_initial_storage_location.custom_field_data.sync_source == 'curated'
+      - >-
+        live_graphql_initial.json.data.ip_addresses
+        | selectattr('address', 'equalto', '192.0.2.254/32') | list | length == 1
+    fail_msg: "live Nautobot records, relationships, or sync_source values did not match the synthetic inputs"

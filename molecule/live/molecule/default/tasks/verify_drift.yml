@@ -1,0 +1,119 @@
+---
+- name: Set the local HEC URL and event log path
+  ansible.builtin.set_fact:
+    live_drift_hec_url: "{{ live_proxmox_api_url | regex_replace('127.0.0.1', 'localhost') }}"
+    live_drift_event_log_path: "{{ live_state_dir }}/hec/events.jsonl"
+
+- name: Derive a source inventory matching the live Nautobot guests
+  ansible.builtin.set_fact:
+    live_drift_matching_inventory: >-
+      {%- set guests = {} -%}
+      {%- for guest in preflight_nautobot_guests -%}
+      {%-   set _ = guests.update({guest.name: {'hostname': guest.name, 'tags': []}}) -%}
+      {%- endfor -%}
+      {{ {'vms': guests} }}
+
+- name: Count HEC events before the informational drift run
+  ansible.builtin.set_fact:
+    live_drift_info_log_count_before: >-
+      {{ (lookup('ansible.builtin.file', live_drift_event_log_path, errors='ignore')
+          | default('', true) | string).splitlines() | length }}
+
+- name: Run drift with a source inventory matching live guests
+  ansible.builtin.include_role:
+    name: drift
+  vars:
+    drift_hec_ca_path: "{{ live_state_dir }}/tls/ca.crt"
+    drift_nautobot_url: "{{ live_nautobot_url }}"
+    drift_read_token: "{{ live_service_account_values.pipeline.token }}"
+    drift_source_inventory: "{{ live_drift_matching_inventory }}"
+    drift_hec_url: "{{ live_drift_hec_url }}"
+    drift_hec_token: "{{ live_test_token }}"
+  no_log: true
+
+- name: Read the informational HEC request records
+  ansible.builtin.set_fact:
+    live_drift_info_log_records: >-
+      {{ (lookup('ansible.builtin.file', live_drift_event_log_path) | string).splitlines()
+         | map('from_json') | list }}
+
+- name: Parse the informational HEC event body
+  ansible.builtin.set_fact:
+    live_drift_info_event: "{{ live_drift_info_log_records[-1].body | from_json }}"
+
+- name: Assert one informational event arrived with the matching guest state
+  ansible.builtin.assert:
+    that:
+      - live_drift_info_log_records | length == (live_drift_info_log_count_before | int) + 1
+      - live_drift_info_event.sourcetype == 'nautobot:drift'
+      - live_drift_info_event.event.severity == 'info'
+      - live_drift_info_event.event.missing_in_nautobot == []
+    fail_msg: The matching guest run did not produce exactly one informational drift event.
+
+- name: Assert the HEC mock received the generated Authorization value
+  ansible.builtin.assert:
+    that:
+      - drift_hec_response.x_observed_authorization == 'Splunk ' ~ live_test_token
+    fail_msg: The HEC mock did not receive the generated Splunk Authorization value.
+  no_log: true
+
+- name: Name the absent source guest
+  ansible.builtin.set_fact:
+    live_drift_missing_guest_name: live-missing-guest
+
+- name: Add one absent guest to the source inventory
+  ansible.builtin.set_fact:
+    live_drift_missing_inventory: >-
+      {{ live_drift_matching_inventory
+         | combine({
+             'vms': live_drift_matching_inventory.vms
+               | combine({
+                   live_drift_missing_guest_name: {
+                     'hostname': live_drift_missing_guest_name,
+                     'tags': []
+                   }
+                 })
+           }) }}
+
+- name: Count HEC events before the critical drift run
+  ansible.builtin.set_fact:
+    live_drift_critical_log_count_before: >-
+      {{ (lookup('ansible.builtin.file', live_drift_event_log_path) | string).splitlines() | length }}
+
+- name: Run drift with one source guest absent from Nautobot
+  ansible.builtin.include_role:
+    name: drift
+  vars:
+    drift_hec_ca_path: "{{ live_state_dir }}/tls/ca.crt"
+    drift_nautobot_url: "{{ live_nautobot_url }}"
+    drift_read_token: "{{ live_service_account_values.pipeline.token }}"
+    drift_source_inventory: "{{ live_drift_missing_inventory }}"
+    drift_hec_url: "{{ live_drift_hec_url }}"
+    drift_hec_token: "{{ live_test_token }}"
+  no_log: true
+
+- name: Read the critical HEC request records
+  ansible.builtin.set_fact:
+    live_drift_critical_log_records: >-
+      {{ (lookup('ansible.builtin.file', live_drift_event_log_path) | string).splitlines()
+         | map('from_json') | list }}
+
+- name: Parse the critical HEC event body
+  ansible.builtin.set_fact:
+    live_drift_critical_event: "{{ live_drift_critical_log_records[-1].body | from_json }}"
+
+- name: Assert one critical event names the guest absent from Nautobot
+  ansible.builtin.assert:
+    that:
+      - live_drift_critical_log_records | length == (live_drift_critical_log_count_before | int) + 1
+      - live_drift_critical_event.sourcetype == 'nautobot:drift'
+      - live_drift_critical_event.event.severity == 'critical'
+      - live_drift_critical_event.event.missing_in_nautobot == [live_drift_missing_guest_name]
+    fail_msg: The absent guest run did not produce exactly one critical drift event for that guest.
+
+- name: Assert the HEC mock received the generated Authorization value
+  ansible.builtin.assert:
+    that:
+      - drift_hec_response.x_observed_authorization == 'Splunk ' ~ live_test_token
+    fail_msg: The HEC mock did not receive the generated Splunk Authorization value.
+  no_log: true

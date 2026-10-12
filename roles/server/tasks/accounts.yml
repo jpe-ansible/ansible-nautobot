@@ -1,0 +1,519 @@
+---
+- name: Require certificate validation for Nautobot API calls
+  ansible.builtin.assert:
+    that:
+      - server_nautobot_validate_certs | bool
+    fail_msg: server_nautobot_validate_certs must be true; the superuser password and API tokens cross this connection.
+    quiet: true
+
+- name: Require https for the Nautobot and OpenBao URLs
+  ansible.builtin.include_role:
+    name: url_guard
+  vars:
+    url_guard_urls: >-
+      {{ [{'name': 'server_nautobot_url', 'url': server_nautobot_url}]
+         + ([{'name': 'server_openbao_addr', 'url': server_openbao_addr}]
+            if server_openbao_addr | length > 0 else []) }}
+
+- name: Define the managed Nautobot service accounts
+  ansible.builtin.set_fact:
+    server_service_accounts:
+      - name: inventory
+        username: "{{ server_inventory_username }}"
+        email: "{{ server_inventory_username }}@{{ server_ui_fqdn }}"
+        path: "{{ server_inventory_token_path }}"
+        token_key: "{{ server_inventory_token_key }}"
+        url_key: "{{ server_inventory_url_key }}"
+        write_enabled: true
+        permissions:
+          - name: ansible-readonly-inventory
+            object_types: "{{ server_inventory_object_types }}"
+            actions: [view]
+            constraints: {}
+          - name: ansible-inventory-own-token
+            object_types: [users.token]
+            actions: [view, add, delete]
+            constraints:
+              user: $user
+      - name: mcp
+        username: "{{ server_mcp_username }}"
+        email: "{{ server_mcp_username }}@{{ server_ui_fqdn }}"
+        path: "{{ server_mcp_token_path }}"
+        token_key: "{{ server_mcp_token_key }}"
+        url_key: "{{ server_mcp_url_key }}"
+        write_enabled: true
+        permissions:
+          - name: ansible-readonly-mcp
+            object_types: "{{ server_mcp_object_types }}"
+            actions: [view]
+            constraints: {}
+          - name: ansible-mcp-own-token
+            object_types: [users.token]
+            actions: [view, add, delete]
+            constraints:
+              user: $user
+      - name: pipeline
+        username: "{{ server_pipeline_username }}"
+        email: "{{ server_pipeline_username }}@{{ server_ui_fqdn }}"
+        path: "{{ server_pipeline_token_path }}"
+        token_key: "{{ server_pipeline_token_key }}"
+        url_key: "{{ server_pipeline_url_key }}"
+        write_enabled: true
+        permissions:
+          - name: ansible-readonly-pipeline
+            object_types: "{{ server_pipeline_object_types }}"
+            actions: [view]
+            constraints: {}
+          - name: ansible-pipeline-own-token
+            object_types: [users.token]
+            actions: [view, add, delete]
+            constraints:
+              user: $user
+      - name: writer
+        username: "{{ server_write_username }}"
+        email: "{{ server_write_username }}@{{ server_ui_fqdn }}"
+        path: "{{ server_write_token_path }}"
+        token_key: "{{ server_write_token_key }}"
+        url_key: "{{ server_write_url_key }}"
+        write_enabled: true
+        permissions:
+          - name: ansible-sync-in-writer
+            object_types: "{{ server_write_object_types }}"
+            actions: [view, add, change]
+            constraints: {}
+          - name: ansible-sync-in-writer-delete
+            object_types: "{{ server_write_delete_types }}"
+            actions: [delete]
+            constraints: {}
+          - name: ansible-sync-in-reference
+            object_types: "{{ server_write_reference_types }}"
+            actions: [view, add, change]
+            constraints: {}
+          - name: ansible-sync-in-lookup
+            object_types: "{{ server_write_lookup_types }}"
+            actions: [view]
+            constraints: {}
+          - name: ansible-sync-in-bootstrap-repository
+            object_types: [extras.gitrepository]
+            actions: [view, add, change]
+            constraints:
+              name: "{{ server_bootstrap_repository_name }}"
+          - name: ansible-sync-in-bootstrap-job
+            object_types: [extras.job]
+            actions: [view, run]
+            constraints:
+              name: "{{ server_bootstrap_job_name }}"
+          - name: ansible-sync-in-bootstrap-job-result
+            object_types: [extras.jobresult]
+            actions: [view]
+            constraints: {}
+          - name: ansible-writer-own-token
+            object_types: [users.token]
+            actions: [view, add, delete]
+            constraints:
+              user: $user
+  changed_when: false
+  no_log: true
+
+- name: Reset transient service account reconciliation state
+  ansible.builtin.set_fact:
+    server_service_secret_data: {}
+    server_service_secret_versions: {}
+    server_working_service_account_names: []
+    server_published_service_token_keys: {}
+    server_accounts_to_reconcile: []
+    server_service_account_passwords: {}
+    server_service_user_ids: {}
+    server_minted_service_tokens: {}
+    server_service_account_rotations: {}
+    server_service_token_sweep_changed: false
+  changed_when: false
+  no_log: true
+
+# Every Nautobot and OpenBao call runs on the controller, so no secret reaches a module file on the Nautobot host.
+- name: Reconcile service accounts, permissions and API tokens from the controller
+  delegate_to: localhost
+  connection: local
+  become: false
+  no_log: true
+  block:
+    - name: Read the stored service account secrets from OpenBao
+      ansible.builtin.uri:
+        url: >-
+          {{ server_openbao_addr | regex_replace('/+$', '') }}/v1/{{ server_openbao_mount
+          }}/data/{{ item.path }}
+        method: GET
+        headers:
+          X-Vault-Token: "{{ server_openbao_token }}"
+        status_code: [200, 404]
+        validate_certs: true
+        ca_path: "{{ server_openbao_ca_file }}"
+      loop: "{{ server_service_accounts }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: server_service_secret_reads
+
+    - name: Save stored secret fields and their KV versions in memory
+      vars:
+        server_kv_read: "{{ (item.json | default({}, true)).get('data') or {} }}"
+      ansible.builtin.set_fact:
+        server_service_secret_data: >-
+          {{ server_service_secret_data | default({})
+          | combine({item.item.name: server_kv_read.get('data') or {}}) }}
+        server_service_secret_versions: >-
+          {{ server_service_secret_versions | default({})
+          | combine({item.item.name: (server_kv_read.get('metadata') or {}).get('version', 0)}) }}
+      changed_when: false
+      loop: "{{ server_service_secret_reads.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Probe stored tokens by listing the tokens each one owns
+      ansible.builtin.uri:
+        url: "{{ server_nautobot_url }}/api/users/tokens/"
+        method: GET
+        headers:
+          Authorization: "Token {{ server_service_secret_data[item.name].get(item.token_key, '') }}"
+          Accept: application/json
+        status_code: [200, 401, 403, 404]
+        return_content: true
+        validate_certs: "{{ server_nautobot_validate_certs }}"
+      loop: "{{ server_service_accounts }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: server_service_token_probes
+      when: server_service_secret_data[item.name].get(item.token_key, '') | length > 0
+
+    - name: Collect service account names whose stored token belongs to the account
+      ansible.builtin.set_fact:
+        server_working_service_account_names: >-
+          {{ server_working_service_account_names | default([]) + [item.item.name] }}
+        server_published_service_token_keys: >-
+          {{ server_published_service_token_keys | default({})
+          | combine({item.item.name: (server_matching_service_tokens | first).key}) }}
+      changed_when: false
+      loop: "{{ server_service_token_probes.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      vars:
+        server_matching_service_tokens: >-
+          {{ item.json.results | default([])
+          | selectattr('key', 'equalto', server_service_secret_data[item.item.name].get(item.item.token_key, ''))
+          | selectattr('description', 'equalto', item.item.name)
+          | selectattr('write_enabled', 'equalto', item.item.write_enabled) | list }}
+      when:
+        - item.status | default(0) | int == 200
+        - server_matching_service_tokens | length == 1
+
+    - name: Select service accounts without a working stored token
+      ansible.builtin.set_fact:
+        server_accounts_to_reconcile: >-
+          {{ server_service_accounts
+          | rejectattr('name', 'in', server_working_service_account_names | default([]))
+          | list }}
+      changed_when: false
+
+    - name: Generate one-time account passwords in memory
+      ansible.builtin.set_fact:
+        server_service_account_passwords: >-
+          {{ server_service_account_passwords | default({})
+          | combine({item.name: lookup('ansible.builtin.password', '/dev/null length=48')}) }}
+      changed_when: false
+      loop: "{{ server_accounts_to_reconcile }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Find temporary superuser tokens left by earlier runs
+      ansible.builtin.uri:
+        url: "{{ server_nautobot_url }}/api/users/tokens/?limit=1000"
+        method: GET
+        url_username: "{{ server_superuser_name }}"
+        url_password: "{{ server_superuser_password }}"
+        force_basic_auth: true
+        headers:
+          Accept: application/json
+        status_code: 200
+        return_content: true
+        validate_certs: "{{ server_nautobot_validate_certs }}"
+      register: server_superuser_token_list
+
+    - name: Delete temporary superuser tokens left by earlier runs
+      ansible.builtin.uri:
+        url: "{{ server_nautobot_url }}/api/users/tokens/{{ item.id }}/"
+        method: DELETE
+        url_username: "{{ server_superuser_name }}"
+        url_password: "{{ server_superuser_password }}"
+        force_basic_auth: true
+        status_code: [200, 204]
+        validate_certs: "{{ server_nautobot_validate_certs }}"
+      loop: >-
+        {{ server_superuser_token_list.json.results
+        | selectattr('description', 'equalto', server_temporary_token_description) | list }}
+      loop_control:
+        label: temporary token
+
+    - name: Create the expiring superuser API token
+      vars:
+        server_temporary_token_expiry_epoch: >-
+          {{ now().timestamp() + (server_temporary_token_minutes | int * 60) }}
+      ansible.builtin.uri:
+        url: "{{ server_nautobot_url }}/api/users/tokens/"
+        method: POST
+        url_username: "{{ server_superuser_name }}"
+        url_password: "{{ server_superuser_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          description: "{{ server_temporary_token_description }}"
+          write_enabled: true
+          expires: "{{ '%Y-%m-%dT%H:%M:%SZ' | strftime(server_temporary_token_expiry_epoch, utc=true) }}"
+        status_code: 201
+        return_content: true
+        validate_certs: "{{ server_nautobot_validate_certs }}"
+      register: server_ephemeral_superuser_token
+
+    - name: Reconcile accounts, permissions and API tokens with the temporary token
+      block:
+        - name: Look up service accounts
+          ansible.builtin.uri:
+            url: >-
+              {{ server_nautobot_url }}/api/users/users/?username={{ item.username | urlencode }}
+            method: GET
+            headers:
+              Authorization: "Token {{ server_ephemeral_superuser_token.json.key }}"
+              Accept: application/json
+            status_code: 200
+            return_content: true
+            validate_certs: "{{ server_nautobot_validate_certs }}"
+          loop: "{{ server_accounts_to_reconcile }}"
+          loop_control:
+            label: "{{ item.name }}"
+          register: server_service_user_lookups
+
+        - name: Create or update service accounts with one-time passwords
+          ansible.builtin.uri:
+            url: >-
+              {{ server_nautobot_url }}/api/users/users/{% if item.json.results | length > 0
+              %}{{ item.json.results[0].id }}/{% endif %}
+            method: "{{ 'PATCH' if item.json.results | length > 0 else 'POST' }}"
+            headers:
+              Authorization: "Token {{ server_ephemeral_superuser_token.json.key }}"
+              Accept: application/json
+            body_format: json
+            body:
+              username: "{{ item.item.username }}"
+              email: "{{ item.item.email }}"
+              password: "{{ server_service_account_passwords[item.item.name] }}"
+              is_active: true
+              is_staff: false
+              is_superuser: false
+            status_code: [200, 201]
+            return_content: true
+            validate_certs: "{{ server_nautobot_validate_certs }}"
+          loop: "{{ server_service_user_lookups.results }}"
+          loop_control:
+            label: "{{ item.item.name }}"
+          register: server_service_user_writes
+
+        - name: Record service account IDs in memory
+          ansible.builtin.set_fact:
+            server_service_user_ids: >-
+              {{ server_service_user_ids | default({})
+              | combine({item.item.item.name: item.json.id}) }}
+          changed_when: false
+          loop: "{{ server_service_user_writes.results }}"
+          loop_control:
+            label: "{{ item.item.item.name }}"
+
+        - name: Reconcile object permissions for every service account
+          networktocode.nautobot.admin_permission:
+            url: "{{ server_nautobot_url }}"
+            token: "{{ server_ephemeral_superuser_token.json.key }}"
+            name: "{{ item.1.name }}"
+            description: "{{ item.1.name }}"
+            enabled: true
+            object_types: "{{ item.1.object_types }}"
+            actions: "{{ item.1.actions }}"
+            users:
+              - "{{ item.0.username }}"
+            constraints: "{{ item.1.constraints }}"
+            validate_certs: "{{ server_nautobot_validate_certs }}"
+            state: present
+          loop: "{{ server_service_accounts | subelements('permissions') }}"
+          loop_control:
+            label: "{{ item.1.name }}"
+
+        - name: Create one API token for each reconciled service account
+          ansible.builtin.uri:
+            url: "{{ server_nautobot_url }}/api/users/tokens/"
+            method: POST
+            url_username: "{{ item.username }}"
+            url_password: "{{ server_service_account_passwords[item.name] }}"
+            force_basic_auth: true
+            body_format: json
+            body:
+              description: "{{ item.name }}"
+              write_enabled: "{{ item.write_enabled }}"
+            status_code: 201
+            return_content: true
+            validate_certs: "{{ server_nautobot_validate_certs }}"
+          loop: "{{ server_accounts_to_reconcile }}"
+          loop_control:
+            label: "{{ item.name }}"
+          register: server_service_token_creates
+
+        - name: Save newly minted tokens in memory
+          ansible.builtin.set_fact:
+            server_minted_service_tokens: >-
+              {{ server_minted_service_tokens | default({})
+              | combine({item.item.name: {'key': item.json.key, 'id': item.json.id}}) }}
+          changed_when: false
+          loop: "{{ server_service_token_creates.results }}"
+          loop_control:
+            label: "{{ item.item.name }}"
+
+        - name: Publish service tokens while preserving sibling secret fields
+          ansible.builtin.uri:
+            url: >-
+              {{ server_openbao_addr | regex_replace('/+$', '') }}/v1/{{ server_openbao_mount
+              }}/data/{{ item.path }}
+            method: POST
+            headers:
+              X-Vault-Token: "{{ server_openbao_token }}"
+            body_format: json
+            body:
+              options:
+                cas: "{{ server_service_secret_versions[item.name] | int }}"
+              data: >-
+                {{ server_service_secret_data[item.name]
+                | combine({item.token_key: server_minted_service_tokens[item.name].key})
+                | combine({item.url_key: server_nautobot_url}) }}
+            status_code: [200, 204]
+            validate_certs: true
+            ca_path: "{{ server_openbao_ca_file }}"
+          loop: "{{ server_accounts_to_reconcile }}"
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Record published token keys for every managed service account
+          ansible.builtin.set_fact:
+            server_published_service_token_keys: >-
+              {{ server_published_service_token_keys | default({})
+              | combine(server_minted_service_token_keys) }}
+          changed_when: false
+          vars:
+            server_minted_service_token_keys: >-
+              {%- set keys = namespace(by_account={}) -%}
+              {%- for account_name, token in (server_minted_service_tokens | default({})).items() -%}
+              {%- set _ = keys.by_account.update({account_name: token.key}) -%}
+              {%- endfor -%}
+              {{ keys.by_account }}
+
+        - name: Require one published token key per managed account
+          ansible.builtin.assert:
+            that:
+              - >-
+                server_published_service_token_keys.keys() | list | sort
+                == server_service_accounts | map(attribute='name') | list | sort
+              - >-
+                server_published_service_token_keys.values() | reject('equalto', '') | list | length
+                == server_service_accounts | length
+            fail_msg: Could not identify every published service token for cleanup.
+            quiet: true
+
+        - name: Read each managed service account's own API tokens
+          ansible.builtin.uri:
+            url: "{{ server_nautobot_url }}/api/users/tokens/?limit=1000"
+            method: GET
+            headers:
+              Authorization: >-
+                Token {{ (server_minted_service_tokens | default({})).get(item.name, {}).get('key',
+                server_service_secret_data[item.name].get(item.token_key, '')) }}
+              Accept: application/json
+            status_code: 200
+            return_content: true
+            validate_certs: "{{ server_nautobot_validate_certs }}"
+          loop: "{{ server_service_accounts }}"
+          loop_control:
+            label: "{{ item.name }}"
+          register: server_managed_service_token_lists
+
+        - name: Require every published token to appear in its owner's token list
+          ansible.builtin.assert:
+            that:
+              - >-
+                item.json.results | selectattr('key', 'equalto', server_published_service_token_keys[item.item.name])
+                | list | length == 1
+            fail_msg: Could not match a published service token in its owner's token list.
+            quiet: true
+          loop: "{{ server_managed_service_token_lists.results }}"
+          loop_control:
+            label: "{{ item.item.name }}"
+
+        - name: Delete every managed service token except its published token
+          ansible.builtin.uri:
+            url: "{{ server_nautobot_url }}/api/users/tokens/{{ item.1.id }}/"
+            method: DELETE
+            headers:
+              Authorization: >-
+                Token {{ (server_minted_service_tokens | default({})).get(item.0.item.name, {}).get('key',
+                server_service_secret_data[item.0.item.name].get(item.0.item.token_key, '')) }}
+              Accept: application/json
+            status_code: [200, 204]
+            validate_certs: "{{ server_nautobot_validate_certs }}"
+          loop: "{{ server_managed_service_token_lists.results | subelements('json.results') }}"
+          loop_control:
+            label: "{{ item.0.item.name }}"
+          changed_when: true
+          when: item.1.key != server_published_service_token_keys[item.0.item.name]
+          register: server_service_token_sweep_deletions
+
+        - name: Record whether the token sweep deleted anything
+          ansible.builtin.set_fact:
+            server_service_token_sweep_changed: >-
+              {{ server_service_token_sweep_deletions.results
+              | selectattr('changed', 'defined')
+              | selectattr('changed', 'equalto', true)
+              | list | length > 0 }}
+          changed_when: false
+
+        - name: Generate replacement passwords after publishing service tokens
+          ansible.builtin.set_fact:
+            server_service_account_rotations: >-
+              {{ server_service_account_rotations | default({})
+              | combine({item.name: lookup('ansible.builtin.password', '/dev/null length=48')}) }}
+          loop: "{{ server_accounts_to_reconcile }}"
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Remove password authentication from service accounts
+          ansible.builtin.uri:
+            url: >-
+              {{ server_nautobot_url }}/api/users/users/{{ server_service_user_ids[item.name] }}/
+            method: PATCH
+            headers:
+              Authorization: "Token {{ server_ephemeral_superuser_token.json.key }}"
+              Accept: application/json
+            body_format: json
+            body:
+              password: "{{ server_service_account_rotations[item.name] }}"
+            status_code: 200
+            validate_certs: "{{ server_nautobot_validate_certs }}"
+          loop: "{{ server_accounts_to_reconcile }}"
+          loop_control:
+            label: "{{ item.name }}"
+      always:
+        - name: Delete the temporary superuser API token
+          ansible.builtin.uri:
+            url: >-
+              {{ server_nautobot_url }}/api/users/tokens/{{ server_ephemeral_superuser_token.json.id }}/
+            method: DELETE
+            url_username: "{{ server_superuser_name }}"
+            url_password: "{{ server_superuser_password }}"
+            force_basic_auth: true
+            status_code: [200, 204]
+            validate_certs: "{{ server_nautobot_validate_certs }}"
+          when: >-
+            server_ephemeral_superuser_token is defined
+            and server_ephemeral_superuser_token.json is defined
+            and server_ephemeral_superuser_token.json.id is defined

@@ -1,0 +1,16 @@
+---
+- name: Plan live virtualization synchronization without writes
+  ansible.builtin.include_role:
+    name: sync_in
+  vars:
+    sync_in_stages: [proxmox]
+    sync_in_pve_components: [virtualization]
+    sync_in_plan_only: true
+    sync_in_nautobot_url: "{{ live_nautobot_url }}"
+    sync_in_read_token: "{{ live_service_account_values.writer.token }}"
+    sync_in_pve_api_url: "{{ live_proxmox_api_url }}"
+    sync_in_pve_token_id: "{{ live_pve_token_id }}"
+    sync_in_pve_token_secret: "{{ live_pve_token_secret }}"
+    sync_in_pve_ca_path: "{{ live_state_dir }}/tls/ca.crt"
+    sync_in_pve_api_timeout: 10
+  no_log: true

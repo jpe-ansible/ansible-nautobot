@@ -1,0 +1,87 @@
+---
+- name: Read live REST resources after source removal
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/{{ item }}?limit=100"
+    method: GET
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+    status_code: 200
+    return_content: true
+  loop:
+    - api/virtualization/virtual-machines/
+    - api/virtualization/interfaces/
+    - api/ipam/ip-addresses/
+    - api/dcim/inventory-items/
+    - api/dcim/modules/
+  loop_control:
+    label: "{{ item }}"
+  register: live_rest_removed
+  no_log: true
+
+- name: Read live GraphQL after source removal
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/graphql/"
+    method: POST
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      query: |
+        query {
+          virtual_machines { name interfaces { name ip_addresses { address } } }
+          ip_addresses { address }
+          inventory_items { name }
+          modules { asset_tag }
+        }
+    status_code: 200
+    return_content: true
+  register: live_graphql_removed
+  no_log: true
+
+- name: Read the foreign guest address after source removal
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/ipam/ip-addresses/?address=198.51.100.30%2F32"
+    method: GET
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+    status_code: 200
+    return_content: true
+  register: live_foreign_address_removed
+  no_log: true
+
+- name: Assert removed objects are absent and unowned data remains
+  ansible.builtin.assert:
+    that:
+      - live_graphql_removed.json.errors | default([]) | length == 0
+      - live_rest_removed.results[0].json.count == 2
+      - live_rest_removed.results[1].json.count == 3
+      - live_rest_removed.results[2].json.count == 7
+      - live_rest_removed.results[3].json.count == 3
+      - live_rest_removed.results[4].json.count == 1
+      - >-
+        live_graphql_removed.json.data.virtual_machines
+        | map(attribute='name') | list | intersect(['guest-3']) | length == 0
+      - >-
+        live_graphql_removed.json.data.virtual_machines | map(attribute='interfaces') | flatten
+        | map(attribute='name') | list | length == 3
+      - >-
+        live_graphql_removed.json.data.ip_addresses | map(attribute='address') | list
+        | intersect(['198.51.100.30/32']) | length == 1
+      - >-
+        live_graphql_removed.json.data.inventory_items | map(attribute='name') | list
+        | intersect(['Drive test-node-b-02']) | length == 0
+      - >-
+        live_graphql_removed.json.data.modules | map(attribute='asset_tag') | sort
+        == ['MODULE-LIVE']
+      - >-
+        live_graphql_removed.json.data.ip_addresses | map(attribute='address') | list
+        | intersect(['192.0.2.254/32']) | length == 1
+      - live_foreign_address_removed.json.count == 1
+      - >-
+        live_foreign_address_removed.json.results[0].description
+        == 'Foreign address retained by the live scenario'
+      - >-
+        (live_foreign_address_removed.json.results[0].custom_fields | default({}, true)).sync_source
+        | default('', true) == ''
+    fail_msg: "removed source objects remain or the unowned control address was changed"

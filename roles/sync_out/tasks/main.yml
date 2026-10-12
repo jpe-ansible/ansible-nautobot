@@ -1,0 +1,9 @@
+---
+- name: Fetch the saved GraphQL query response
+  ansible.builtin.import_tasks: fetch.yml
+
+- name: Transform the GraphQL response into the export document
+  ansible.builtin.import_tasks: transform.yml
+
+- name: Publish the export document
+  ansible.builtin.import_tasks: publish.yml

@@ -1,0 +1,145 @@
+---
+- name: Verify outbound-sync transformation and contract
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/fixtures/export-response.yml"
+  tasks:
+    - name: Require last_updated on each root of the saved export query
+      ansible.builtin.assert:
+        that:
+          - saved_export_query is search('(?m)^  ' ~ item ~ ' [{]\n    last_updated$')
+        fail_msg: "The saved export query root {{ item }} lacks last_updated, which the transform requires."
+      loop: [vlans, prefixes, ip_addresses, devices, racks, interfaces]
+      vars:
+        saved_export_query: >-
+          {{ (lookup('ansible.builtin.file', playbook_dir ~ '/../../../../global_settings.yml')
+              | from_yaml).graph_ql_query
+             | selectattr('name', 'equalto', 'nautobot-export') | map(attribute='query') | first }}
+      delegate_to: localhost
+      run_once: true
+
+    - name: Transform the GraphQL fixture with the sync_out role
+      ansible.builtin.include_role:
+        name: sync_out
+        tasks_from: transform.yml
+        public: true
+      vars:
+        sync_out_query_response: "{{ sync_out_fixture_response }}"
+
+    - name: Fetch the pinned export contract schema
+      ansible.builtin.uri:
+        url: "{{ sync_out_contract_schema_url }}"
+        return_content: true
+        status_code: 200
+      delegate_to: localhost
+      run_once: true
+      register: sync_out_contract_schema_response
+
+    - name: Validate the rendered export document
+      ansible.utils.validate:
+        data: "{{ sync_out_document }}"
+        criteria: "{{ sync_out_contract_schema_response.content | from_json }}"
+        engine: ansible.utils.jsonschema
+      delegate_to: localhost
+      run_once: true
+      register: sync_out_valid_contract_result
+
+    - name: Assert the export fields and freshness value
+      ansible.builtin.assert:
+        that:
+          - sync_out_document.schema_version == '1.0.0'
+          - sync_out_document.vlans[0].group == 'Core'
+          - sync_out_document.prefixes[0].cidr == '192.0.2.0/24'
+          - sync_out_document.ip_addresses[0].assigned_interface.device == 'node-1'
+          - sync_out_document.ip_addresses[0].assigned_interface.name == 'eth0'
+          - sync_out_document.ip_addresses[0].mac == 'aa:bb:cc:dd:ee:02'
+          - sync_out_document.devices[0].bmc.address == '192.0.2.10'
+          - sync_out_document.racks[0].site == 'Site A'
+          - sync_out_document.interfaces[0].mac == 'aa:bb:cc:dd:ee:02'
+          - sync_out_data_as_of == '2026-10-01T10:50:00Z'
+          - "'virtual_machines' not in sync_out_document"
+          - "'type' not in sync_out_document.ip_addresses[0]"
+
+    - name: Build a broken fixture without a rack site
+      ansible.builtin.set_fact:
+        sync_out_missing_site_response:
+          json:
+            data: >-
+              {{ sync_out_fixture_response.json.data
+                 | combine({
+                     'racks': [
+                       sync_out_fixture_response.json.data.racks[0]
+                       | combine({'location': none})
+                     ]
+                   }) }}
+
+    - name: Build the export with forbidden schema keys
+      ansible.builtin.set_fact:
+        sync_out_invalid_document: >-
+          {{ sync_out_document
+             | combine({
+                 'virtual_machines': [],
+                 'ip_addresses': [
+                   sync_out_document.ip_addresses[0]
+                   | combine({'type': 'host'})
+                 ]
+               }) }}
+
+    - name: Assert transformation rejects a rack without a site
+      block:
+        - name: Transform the broken GraphQL fixture
+          ansible.builtin.include_role:
+            name: sync_out
+            tasks_from: transform.yml
+          vars:
+            sync_out_query_response: "{{ sync_out_missing_site_response }}"
+        - name: Fail if transformation accepts a rack without a site
+          ansible.builtin.fail:
+            msg: The transform accepted a rack without a site.
+      rescue:
+        - name: Confirm the source record failure message
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg == 'A source rack is missing its site.'
+
+    - name: Assert transformation rejects an export without devices
+      block:
+        - name: Transform a response whose device list is empty
+          ansible.builtin.include_role:
+            name: sync_out
+            tasks_from: transform.yml
+          vars:
+            sync_out_query_response:
+              json:
+                data: "{{ sync_out_fixture_response.json.data | combine({'devices': []}) }}"
+        - name: Fail if transformation accepts an export without devices
+          ansible.builtin.fail:
+            msg: The transform accepted an export without devices.
+      rescue:
+        - name: Confirm the empty device list failure message
+          ansible.builtin.assert:
+            that:
+              - >-
+                ansible_failed_result.msg ==
+                'The export has no devices or no IP addresses; the token may lack view permission.'
+
+    - name: Assert the strict contract rejects forbidden export keys
+      block:
+        - name: Validate a fixture with forbidden keys
+          ansible.utils.validate:
+            data: "{{ sync_out_invalid_document }}"
+            criteria: "{{ sync_out_contract_schema_response.content | from_json }}"
+            engine: ansible.utils.jsonschema
+          delegate_to: localhost
+          run_once: true
+        - name: Fail if the strict contract accepts forbidden keys
+          ansible.builtin.fail:
+            msg: The contract accepted forbidden export keys.
+      rescue:
+        - name: Confirm both forbidden keys failed validation
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg is match('Validation errors were found')
+              - "'virtual_machines' in (ansible_failed_result.errors | join(' '))"
+              - "'type' in (ansible_failed_result.errors | join(' '))"

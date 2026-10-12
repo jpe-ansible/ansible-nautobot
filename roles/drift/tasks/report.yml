@@ -1,0 +1,21 @@
+---
+- name: Send drift event to HEC
+  ansible.builtin.uri:
+    url: "{{ drift_hec_url }}/services/collector/event"
+    method: POST
+    headers:
+      Authorization: "Splunk {{ drift_hec_token }}"
+      Content-Type: application/json
+    body_format: json
+    body: "{{ drift_event_envelope }}"
+    status_code: 200
+    timeout: 30
+    validate_certs: true
+    ca_path: "{{ drift_hec_ca_path | default(omit, true) }}"
+  register: drift_hec_response
+  # Retry transient failures only; a repeated post can duplicate one event, never lose it.
+  until: drift_hec_response is not failed or (drift_hec_response.status | default(-1)) in [400, 401, 403, 404]
+  retries: 2
+  delay: 15
+  when: not ansible_check_mode
+  no_log: true

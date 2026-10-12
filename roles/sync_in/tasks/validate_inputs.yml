@@ -1,0 +1,72 @@
+---
+- name: Assert the requested sync_in stages exist
+  ansible.builtin.assert:
+    that:
+      - sync_in_stages | difference(sync_in_known_stages) | length == 0
+    fail_msg: "sync_in_stages holds an unknown stage; known stages: {{ sync_in_known_stages | join(', ') }}"
+    quiet: true
+
+- name: Assert the requested curated component selectors exist
+  ansible.builtin.assert:
+    that:
+      - sync_in_curated_components | difference(['dcim', 'hardware']) | length == 0
+    fail_msg: "sync_in_curated_components holds an unknown family; known families: dcim, hardware"
+    quiet: true
+
+- name: Assert the requested Proxmox component selectors exist
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_components | difference(['virtualization', 'nodes', 'drives']) | length == 0
+    fail_msg: "sync_in_pve_components holds an unknown family; known families: virtualization, nodes, drives"
+    quiet: true
+
+- name: Validate Proxmox node map entries
+  ansible.builtin.assert:
+    that:
+      - item is mapping
+      - >-
+        item.keys() | difference(['name', 'nautobot_device_name', 'commissioned', 'management_dns_name'])
+        | length == 0
+      - item.name is defined
+      - item.name is string
+      - item.name | default('') | length > 0
+      - >-
+        item.nautobot_device_name is not defined
+        or (item.nautobot_device_name is string and item.nautobot_device_name | length > 0)
+      - item.commissioned is not defined or item.commissioned is boolean
+      - >-
+        item.management_dns_name is not defined
+        or (item.management_dns_name is string and item.management_dns_name | length > 0)
+    fail_msg: "sync_in_pve_node_map entries require a name and valid optional values"
+    quiet: true
+  loop: "{{ sync_in_pve_node_map }}"
+  loop_control:
+    label: node map entry
+
+- name: Reject duplicate Proxmox node map names
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_node_map | map(attribute='name') | list | unique | length == sync_in_pve_node_map | length
+    fail_msg: "sync_in_pve_node_map names must be unique"
+    quiet: true
+
+- name: Assert the Nautobot connection inputs for the requested stages
+  ansible.builtin.assert:
+    that:
+      - sync_in_nautobot_url is defined and sync_in_nautobot_url | length > 0
+      - sync_in_read_token is defined and sync_in_read_token | length > 0
+      - sync_in_plan_only or sync_in_write_token is defined
+      - sync_in_plan_only or sync_in_write_token | default('') | length > 0
+    fail_msg: >-
+      sync_in_nautobot_url and sync_in_read_token are required when any stage runs;
+      sync_in_write_token is also required unless sync_in_plan_only is true.
+    quiet: true
+  when: sync_in_stages | length > 0
+
+- name: Require an https Nautobot URL
+  ansible.builtin.include_role:
+    name: url_guard
+  vars:
+    url_guard_urls:
+      - {name: sync_in_nautobot_url, url: "{{ sync_in_nautobot_url }}"}
+  when: sync_in_stages | length > 0

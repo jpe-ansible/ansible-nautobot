@@ -1,0 +1,157 @@
+---
+argument_specs:
+  main:
+    short_description: Synchronize data into Nautobot.
+    options:
+      sync_in_stages:
+        type: list
+        elements: str
+        description: Stages to run, in the fixed order bootstrap, proxmox, curated.
+        default: [bootstrap, proxmox, curated]
+      sync_in_curated_components:
+        type: list
+        elements: str
+        description: Curated object families to synchronize.
+        default: [dcim, hardware]
+      sync_in_pve_components:
+        type: list
+        elements: str
+        description: Proxmox object families to synchronize.
+        default: [virtualization, nodes, drives]
+      sync_in_pve_node_map:
+        type: list
+        elements: dict
+        description: Proxmox node names, Device names, commissioning flags, and management DNS names.
+        default: []
+      sync_in_plan_only:
+        type: bool
+        description: Read and transform selected stages, report changes, and perform no writes.
+        default: false
+      sync_in_nautobot_url:
+        type: str
+        description: Nautobot base URL; required when any stage runs.
+      sync_in_read_token:
+        type: str
+        description: Read-only API token for Nautobot reads; required when any stage runs.
+        no_log: true
+      sync_in_write_token:
+        type: str
+        description: >-
+          API token with write permission on synchronized object types; required when plan-only is false and any
+          stage runs.
+        no_log: true
+      sync_in_bootstrap_repo_name:
+        type: str
+        description: Name of the Git Repository record that holds the Bootstrap data; must contain Bootstrap.
+        default: Nautobot Bootstrap
+      sync_in_bootstrap_repo_url:
+        type: str
+        description: Remote URL of the Bootstrap data repository; required by the bootstrap stage.
+      sync_in_bootstrap_branch:
+        type: str
+        description: Branch of the Bootstrap data repository; must match the default record in develop.yml.
+      sync_in_bootstrap_job_name:
+        type: str
+        description: Name of the Bootstrap job that loads the data.
+        default: Bootstrap to Nautobot
+      sync_in_bootstrap_timeout:
+        type: int
+        description: Seconds to wait for each Bootstrap job result.
+        default: 600
+      sync_in_pve_api_url:
+        type: str
+        description: HTTPS base URL of the Proxmox VE API with no path; required by the proxmox stage.
+      sync_in_pve_token_id:
+        type: str
+        description: Read-only Proxmox API token ID in the form user@realm!name; required by the proxmox stage.
+      sync_in_pve_token_secret:
+        type: str
+        description: Secret of the Proxmox API token; required by the proxmox stage.
+        no_log: true
+      sync_in_pve_ca_path:
+        type: str
+        description: Path of the CA bundle that validates the Proxmox API certificate; required by the proxmox stage.
+      sync_in_pve_api_timeout:
+        type: int
+        description: Seconds to wait for each Proxmox API call.
+        default: 30
+      sync_in_prune_max_fraction:
+        type: float
+        description: Largest fraction of owned objects one run may delete; a larger plan fails the run.
+        default: 0.25
+      sync_in_prune_min_allowance:
+        type: int
+        description: Number of owned objects a family may delete before the fraction guard applies.
+        default: 1
+      sync_in_pve_location_name:
+        type: str
+        description: Name of the existing Location that holds node Devices.
+        default: homelab
+      sync_in_pve_namespace_name:
+        type: str
+        description: Namespace whose Prefixes decide which guest addresses are synchronized.
+        default: Global
+      sync_in_pve_status_name:
+        type: str
+        description: Status given to every object the proxmox stage writes.
+        default: Active
+      sync_in_pve_node_role_name:
+        type: str
+        description: Device role of Proxmox nodes.
+        default: pve-node
+      sync_in_pve_vm_role_name:
+        type: str
+        description: Role of virtual machines and containers.
+        default: vm
+      sync_in_pve_device_type_model:
+        type: str
+        description: Device type model of Proxmox nodes.
+        default: pve-node
+      sync_in_pve_manufacturer_name:
+        type: str
+        description: Manufacturer of the node Device type and the fallback for drives with no vendor.
+        default: Generic
+      sync_in_pve_cluster_type_name:
+        type: str
+        description: Cluster type of the per-node clusters.
+        default: Proxmox
+      sync_in_racks:
+        type: list
+        elements: dict
+        description: Curated racks with a name and an optional site.
+        default: []
+      sync_in_devices:
+        type: list
+        elements: dict
+        description: Curated rack-server devices.
+        default: []
+      sync_in_hardware_devices:
+        type: list
+        elements: dict
+        description: Curated standalone hardware devices.
+        default: []
+      sync_in_hardware_modules:
+        type: list
+        elements: dict
+        description: Curated hardware modules, with an optional quantity.
+        default: []
+      sync_in_wan_circuits:
+        type: list
+        elements: dict
+        description: Curated WAN circuits.
+        default: []
+      sync_in_vlans:
+        type: list
+        elements: dict
+        description: Curated VLANs.
+        default: []
+      sync_in_prefixes:
+        type: list
+        elements: dict
+        description: Curated prefixes.
+        default: []
+      sync_in_reservations:
+        type: list
+        elements: dict
+        description: Curated host IP reservations.
+        default: []

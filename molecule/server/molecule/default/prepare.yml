@@ -1,0 +1,12 @@
+---
+- name: Prepare
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for the test container connection
+      ansible.builtin.wait_for_connection:
+        timeout: 180
+
+    - name: Gather test container facts
+      ansible.builtin.setup:

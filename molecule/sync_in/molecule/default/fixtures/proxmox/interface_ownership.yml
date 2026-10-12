@@ -1,0 +1,105 @@
+---
+sync_in_pve_components:
+  - virtualization
+sync_in_pve_node_info:
+  proxmox_nodes:
+    - node: node-a
+      status: online
+      maxmem: 8589934592
+      maxcpu: 8
+sync_in_pve_vm_info:
+  proxmox_vms:
+    - vmid: 101
+      name: owned-guest
+      node: node-a
+      type: qemu
+      template: false
+      maxcpu: 1
+      maxmem: 1073741824
+      maxdisk: 1073741824
+      config:
+        net0: virtio=02:00:00:00:00:01,bridge=br0
+        ipconfig0: ip=192.0.2.10/24,gw=192.0.2.1
+    - vmid: 102
+      name: adopted-guest
+      node: node-a
+      type: qemu
+      template: false
+      maxcpu: 1
+      maxmem: 1073741824
+      maxdisk: 1073741824
+      config:
+        net0: virtio=02:00:00:00:00:02,bridge=br0
+        ipconfig0: ip=198.51.100.11/24,gw=198.51.100.1
+    - vmid: 103
+      name: new-guest
+      node: node-a
+      type: qemu
+      template: false
+      maxcpu: 1
+      maxmem: 1073741824
+      maxdisk: 1073741824
+      config:
+        net0: virtio=02:00:00:00:00:03,bridge=br0
+        ipconfig0: ip=192.0.2.20/24,gw=192.0.2.1
+sync_in_pve_nautobot_snapshot:
+  data:
+    devices: []
+    inventory_items: []
+    virtual_machines:
+      - id: owned-vm
+        name: owned-guest
+        cluster:
+          id: cluster-a
+          name: node-a
+        custom_field_data:
+          sync_source: proxmox
+          vmid: 101
+        interfaces:
+          - id: owned-interface
+            name: net0
+            custom_field_data:
+              sync_source: proxmox
+            ip_addresses:
+              - address: 192.0.2.30/32
+      - id: adopted-vm
+        name: adopted-guest
+        cluster:
+          id: cluster-a
+          name: node-a
+        custom_field_data:
+          sync_source: curated
+        interfaces:
+          - id: foreign-interface
+            name: net0
+            custom_field_data:
+              sync_source: curated
+            ip_addresses:
+              - address: 198.51.100.30/32
+    ip_addresses:
+      - id: old-owned-ip
+        address: 192.0.2.30/32
+        dns_name: owned-guest
+        interfaces: []
+        custom_field_data:
+          sync_source: proxmox
+      - id: manual-ip
+        address: 198.51.100.30/32
+        dns_name: adopted-guest
+        interfaces: []
+        custom_field_data:
+          sync_source: curated
+    prefixes:
+      - prefix: 192.0.2.0/24
+        namespace:
+          name: Global
+      - prefix: 198.51.100.0/24
+        namespace:
+          name: Global
+    clusters: []
+    statuses: []
+    roles: []
+    tags: []
+    cluster_types: []
+    manufacturers: []
+    device_types: []

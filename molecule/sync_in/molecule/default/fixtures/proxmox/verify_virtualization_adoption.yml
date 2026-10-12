@@ -1,0 +1,156 @@
+---
+- name: Load exact-name virtualization adoption fixture
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/proxmox/virtualization_adoption.yml"
+    name: sync_in_adoption_fixture
+
+- name: Set exact-name virtualization adoption inputs
+  ansible.builtin.set_fact:
+    sync_in_pve_components: "{{ sync_in_adoption_fixture.sync_in_pve_components }}"
+    sync_in_pve_node_info: "{{ sync_in_adoption_fixture.sync_in_pve_node_info }}"
+    sync_in_pve_vm_info: "{{ sync_in_adoption_fixture.sync_in_pve_vm_info }}"
+    sync_in_pve_nautobot_snapshot: "{{ sync_in_adoption_fixture.sync_in_pve_nautobot_snapshot }}"
+    sync_in_plan: {}
+
+- name: Transform and plan exact-name virtualization adoption
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+- name: Build exact-name virtualization adoption plan
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_plan.yml"
+
+- name: Assert the plan identifies adopted objects and ignores VMID-only matches
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_virtualization_plan.adoptions | length == 1
+      - sync_in_pve_virtualization_plan.adoptions[0].match == 'exact_name'
+      - sync_in_pve_virtualization_plan.adoptions[0].existing_object.id == 'vm-existing'
+      - sync_in_pve_virtualization_plan.adoptions[0].existing_object.name == 'legacy-seed'
+      - sync_in_pve_virtualization_plan.adoptions[0].live_vmid == 701
+      - sync_in_pve_virtualization_plan.adoptions[0].live_cluster == 'node-a'
+      - sync_in_pve_virtualization_plan.adoptions[0].changed_fields.memory.old == 1024
+      - sync_in_pve_virtualization_plan.adoptions[0].changed_fields.memory.new == 2048
+      - sync_in_pve_interface_records[0].custom_fields is not defined
+      - >-
+        sync_in_pve_virtualization_plan['update']
+        | selectattr('object_kind', 'equalto', 'vm_interface') | list | length == 0
+      - >-
+        'new-by-name (VMID 702)' in
+        (sync_in_pve_virtualization_plan.create | map(attribute='identifier') | list)
+      - sync_in_pve_ip_records | map(attribute='address') | list == ['192.0.2.82/32']
+      - >-
+        sync_in_pve_interface_records | map(attribute='ip_addresses') | flatten
+        | map(attribute='ip_address') | list | select('equalto', '192.0.2.81/32') | list | length == 1
+      - >-
+        sync_in_pve_prune_lists.ip_addresses | map(attribute='id') | list
+        == []
+
+- name: Prove duplicate exact-name adoption fails with the VM name
+  block:
+    - name: Add a second exact-name VM to the Nautobot snapshot
+      ansible.builtin.set_fact:
+        sync_in_pve_nautobot_snapshot: >-
+          {{ sync_in_adoption_fixture.sync_in_pve_nautobot_snapshot
+             | combine({'data': {'virtual_machines':
+               sync_in_adoption_fixture.sync_in_pve_nautobot_snapshot.data.virtual_machines
+               + [sync_in_adoption_fixture.sync_in_pve_nautobot_snapshot.data.virtual_machines[0]]}},
+               recursive=true) }}
+
+    - name: Transform duplicate-name adoption input
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+    - name: Fail if duplicate-name adoption was accepted
+      ansible.builtin.fail:
+        msg: Duplicate-name adoption was accepted.
+  rescue:
+    - name: Assert duplicate-name adoption fails with the matching VM name
+      ansible.builtin.assert:
+        that:
+          - "'Refusing VM adoption for legacy-seed' in (ansible_failed_result.msg | default(''))"
+          - "'multiple exact-name matches' in (ansible_failed_result.msg | default(''))"
+
+- name: Restore the exact-name adoption snapshot
+  ansible.builtin.set_fact:
+    sync_in_pve_nautobot_snapshot: "{{ sync_in_adoption_fixture.sync_in_pve_nautobot_snapshot }}"
+
+- name: Prove wrong-cluster adoption fails with the VM name
+  block:
+    - name: Move the matching VM snapshot to another cluster
+      ansible.builtin.set_fact:
+        sync_in_pve_nautobot_snapshot: >-
+          {%- set snapshot = sync_in_adoption_fixture.sync_in_pve_nautobot_snapshot -%}
+          {%- set wrong_cluster = snapshot.data.virtual_machines[0]
+              | combine({'cluster': {'id': 'cluster-b', 'name': 'node-b'}}, recursive=true) -%}
+          {{ snapshot | combine({'data': {'virtual_machines':
+            [wrong_cluster] + snapshot.data.virtual_machines[1:]}}, recursive=true) }}
+
+    - name: Transform wrong-cluster adoption input
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+    - name: Fail if wrong-cluster adoption was accepted
+      ansible.builtin.fail:
+        msg: Wrong-cluster adoption was accepted.
+  rescue:
+    - name: Assert wrong-cluster adoption fails with the matching VM name
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_failed_result.msg ==
+            'Refusing VM adoption for legacy-seed: existing cluster node-b differs from live cluster node-a'
+
+- name: Verify an owned VM migrated to another node is updated in place
+  block:
+    - name: Set a live guest on node-b and mark its existing VM as flow-owned
+      ansible.builtin.set_fact:
+        sync_in_pve_components: [virtualization]
+        sync_in_pve_node_info:
+          proxmox_nodes: >-
+            {{ sync_in_adoption_fixture.sync_in_pve_node_info.proxmox_nodes
+               + [sync_in_adoption_fixture.sync_in_pve_node_info.proxmox_nodes[0]
+                  | combine({'node': 'node-b'})] }}
+        sync_in_pve_vm_info:
+          proxmox_vms:
+            - "{{ sync_in_adoption_fixture.sync_in_pve_vm_info.proxmox_vms[0] | combine({'node': 'node-b'}) }}"
+        sync_in_pve_nautobot_snapshot: >-
+          {%- set snapshot = sync_in_adoption_fixture.sync_in_pve_nautobot_snapshot -%}
+          {%- set existing = snapshot.data.virtual_machines[0] -%}
+          {%- set owned = existing | combine({'custom_field_data':
+              existing.custom_field_data | combine({'sync_source': 'proxmox'})}) -%}
+          {{ snapshot | combine({'data': {'virtual_machines': [owned]}}, recursive=true) }}
+        sync_in_plan: {}
+
+    - name: Transform the owned migrated guest
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+    - name: Plan the owned migrated guest
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_plan.yml"
+
+    - name: Assert migration plans one VM cluster update and no VM create
+      ansible.builtin.assert:
+        that:
+          - sync_in_pve_transform_passed
+          - >-
+            sync_in_pve_virtualization_plan['update']
+            | selectattr('object_kind', 'equalto', 'virtual_machine') | list | length == 1
+          - >-
+            (sync_in_pve_virtualization_plan['update']
+             | selectattr('object_kind', 'equalto', 'virtual_machine') | first)
+            .changed_fields.cluster.old == 'node-a'
+          - >-
+            (sync_in_pve_virtualization_plan['update']
+             | selectattr('object_kind', 'equalto', 'virtual_machine') | first)
+            .changed_fields.cluster.new == 'node-b'
+          - >-
+            sync_in_pve_virtualization_plan.create
+            | selectattr('object_kind', 'equalto', 'virtual_machine') | list | length == 0
+          - sync_in_pve_vm_cluster_moves | length == 1
+          - sync_in_pve_vm_cluster_moves[0].id == 'vm-existing'
+          - sync_in_pve_vm_cluster_moves[0].cluster == 'node-b'
+        fail_msg: >-
+          M1 owned migration assertion failed: expected one legacy-seed cluster update from node-a to node-b
+          and no VirtualMachine create, with the same target in the apply move list
+  rescue:
+    - name: Record the owned migration regression result
+      ansible.builtin.set_fact:
+        sync_in_pve_regression_failures: >-
+          {{ sync_in_pve_regression_failures
+             + ['owned migration: ' ~ (ansible_failed_result.msg | default(ansible_failed_result | to_json))] }}

@@ -1,0 +1,7 @@
+---
+# Role READMEs describe how to call one role; install steps live in the root README only.
+required_sections:
+  - Usage
+optional_sections:
+  - Contributing
+  - License

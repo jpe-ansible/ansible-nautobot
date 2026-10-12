@@ -1,0 +1,78 @@
+---
+- name: Install system packages required by Nautobot
+  ansible.builtin.apt:
+    name: "{{ server_system_packages }}"
+    state: present
+    update_cache: true
+
+- name: Create the Nautobot system group
+  ansible.builtin.group:
+    name: "{{ server_group }}"
+    system: true
+
+- name: Create the Nautobot system user
+  ansible.builtin.user:
+    name: "{{ server_user }}"
+    group: "{{ server_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ server_root }}"
+    create_home: true
+
+- name: Create the Nautobot directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ server_user }}"
+    group: "{{ server_group }}"
+    mode: "0755"
+  loop:
+    - "{{ server_root }}"
+    - "{{ server_root }}/static"
+
+- name: Bind Redis to loopback
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: "^bind "
+    line: "bind {{ server_redis_host }}"
+    state: present
+  notify: Restart redis
+
+- name: Enforce Redis protected mode
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: "^protected-mode "
+    line: "protected-mode yes"
+    state: present
+  notify: Restart redis
+
+- name: Create the Redis systemd override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/redis-server.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure Redis for container user namespaces
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/redis-server.service.d/lxc-override.conf
+    content: |
+      # Managed by Ansible.
+      [Service]
+      PrivateUsers=no
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd daemon
+    - Restart redis
+
+- name: Apply Redis configuration before starting it
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start Redis
+  ansible.builtin.systemd:
+    name: redis-server
+    state: started
+    enabled: true

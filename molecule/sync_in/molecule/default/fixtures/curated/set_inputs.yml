@@ -1,0 +1,13 @@
+---
+- name: Set curated fixture inputs
+  ansible.builtin.set_fact:
+    sync_in_racks: "{{ sync_in_curated_fixture.sync_in_racks }}"
+    sync_in_devices: "{{ sync_in_curated_fixture.sync_in_devices }}"
+    sync_in_hardware_devices: "{{ sync_in_curated_fixture.sync_in_hardware_devices }}"
+    sync_in_hardware_modules: "{{ sync_in_curated_fixture.sync_in_hardware_modules }}"
+    sync_in_wan_circuits: "{{ sync_in_curated_fixture.sync_in_wan_circuits }}"
+    sync_in_vlans: "{{ sync_in_curated_fixture.sync_in_vlans }}"
+    sync_in_prefixes: "{{ sync_in_curated_fixture.sync_in_prefixes }}"
+    sync_in_reservations: "{{ sync_in_curated_fixture.sync_in_reservations }}"
+    sync_in_curated_snapshot: "{{ sync_in_curated_fixture.sync_in_curated_snapshot }}"
+    sync_in_plan: {}

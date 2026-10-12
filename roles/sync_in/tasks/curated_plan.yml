@@ -1,0 +1,487 @@
+---
+- name: Build the curated DCIM family plan
+  ansible.builtin.set_fact:
+    sync_in_curated_dcim_plan: >-
+      {%- set data = sync_in_curated_snapshot.data -%}
+      {%- set out = namespace(create=[], update=[], delete=[]) -%}
+      {%- for name in sync_in_curated_missing_manufacturers
+          if name == sync_in_curated_generic_manufacturer -%}
+      {%- set out.create = out.create + [{'object_kind': 'manufacturer', 'identifier': name}] -%}
+      {%- endfor -%}
+      {%- for name in sync_in_curated_missing_roles
+          if name in sync_in_curated_devices | map(attribute='sync_in_curated_role') | list -%}
+      {%- set out.create = out.create + [{'object_kind': 'device_role', 'identifier': name}] -%}
+      {%- endfor -%}
+      {%- set seen_device_type_heights = namespace(keys=[]) -%}
+      {%- for wanted in sync_in_curated_devices
+          if wanted.sync_in_curated_type_u_height is defined -%}
+      {%- set type_key = wanted.sync_in_curated_type_manufacturer ~ '/' ~ wanted.sync_in_curated_type_model -%}
+      {%- if type_key not in seen_device_type_heights.keys -%}
+      {%- set current_type = (data.device_types | default([])
+          | selectattr('model', 'equalto', wanted.sync_in_curated_type_model)
+          | selectattr('manufacturer.name', 'equalto', wanted.sync_in_curated_type_manufacturer)
+          | list | first | default({})) -%}
+      {%- if not current_type -%}
+      {%- set out.create = out.create + [{'object_kind': 'device_type', 'identifier': type_key}] -%}
+      {%- elif current_type.u_height | default(none) != wanted.sync_in_curated_type_u_height -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'device_type', 'identifier': type_key,
+        'changed_fields': {'u_height': {
+          'old': current_type.u_height | default(none), 'new': wanted.sync_in_curated_type_u_height
+        }}
+      }] -%}
+      {%- endif -%}
+      {%- set seen_device_type_heights.keys = seen_device_type_heights.keys + [type_key] -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_curated_racks -%}
+      {%- set current = (data.racks | default([]) | selectattr('name', 'equalto', wanted.name)
+          | list | first | default({})) -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{'object_kind': 'rack', 'identifier': wanted.name}] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- if current.location.name | default('') != wanted.sync_in_curated_site -%}
+      {%- set fields.value = fields.value | combine({'location': {
+        'old': current.location.name | default(none), 'new': wanted.sync_in_curated_site
+      }}) -%}
+      {%- endif -%}
+      {%- if current.status.name | default('') != wanted.sync_in_curated_status -%}
+      {%- set fields.value = fields.value | combine({'status': {
+        'old': current.status.name | default(none), 'new': wanted.sync_in_curated_status
+      }}) -%}
+      {%- endif -%}
+      {%- if current.custom_field_data.sync_source | default('') != wanted.sync_in_curated_custom_fields.sync_source -%}
+      {%- set fields.value = fields.value | combine({'custom_fields.sync_source': {
+        'old': current.custom_field_data.sync_source | default(none),
+        'new': wanted.sync_in_curated_custom_fields.sync_source
+      }}) -%}
+      {%- endif -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'rack', 'identifier': wanted.name, 'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_curated_devices -%}
+      {%- set current = (data.devices | default([]) | selectattr('name', 'equalto', wanted.name)
+          | list | first | default({})) -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{'object_kind': 'device', 'identifier': wanted.name}] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- set pairs = namespace(value=[
+          ['device_type', current.device_type.model | default(none), wanted.sync_in_curated_type_model],
+          ['role', current.role.name | default(none), wanted.sync_in_curated_role],
+          ['location', current.location.name | default(none), wanted.sync_in_curated_location],
+          ['status', current.status.name | default(none), wanted.sync_in_curated_status]
+        ]) -%}
+      {%- if wanted.sync_in_curated_serial | default('', true) | length > 0 -%}
+      {%- set pairs.value = pairs.value + [['serial', current.serial | default('', true),
+          wanted.sync_in_curated_serial]] -%}
+      {%- endif -%}
+      {%- if wanted.sync_in_curated_rack is defined -%}
+      {%- set pairs.value = pairs.value + [['rack', current.rack.name | default(none),
+          wanted.sync_in_curated_rack]] -%}
+      {%- endif -%}
+      {%- if wanted.sync_in_curated_position is defined -%}
+      {%- set pairs.value = pairs.value + [['position', current.position | default(none),
+          wanted.sync_in_curated_position]] -%}
+      {%- endif -%}
+      {%- if wanted.sync_in_curated_face is defined -%}
+      {%- set pairs.value = pairs.value + [['face', (current.face | default('', true) | lower) or none,
+          wanted.sync_in_curated_face]] -%}
+      {%- endif -%}
+      {%- for pair in pairs.value -%}
+      {%- if pair[1] != pair[2] -%}
+      {%- set fields.value = fields.value | combine({pair[0]: {'old': pair[1], 'new': pair[2]}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- if current.custom_field_data.sync_source | default('') != wanted.sync_in_curated_custom_fields.sync_source -%}
+      {%- set fields.value = fields.value | combine({'custom_fields.sync_source': {
+        'old': current.custom_field_data.sync_source | default(none),
+        'new': wanted.sync_in_curated_custom_fields.sync_source
+      }}) -%}
+      {%- endif -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'device', 'identifier': wanted.name, 'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- if wanted.sync_in_curated_has_bmc -%}
+      {%- set current_bmc = current.interfaces | default([])
+          | selectattr('name', 'equalto', sync_in_curated_bmc_interface_name) | list | first | default({}) -%}
+      {%- set bmc_identifier = wanted.name ~ ':' ~ sync_in_curated_bmc_interface_name -%}
+      {%- if not current_bmc -%}
+      {%- set out.create = out.create + [{'object_kind': 'device_interface', 'identifier': bmc_identifier}] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- for pair in [
+          ['type', (current_bmc.type | default('', true) | lower) or none, sync_in_curated_bmc_interface_type],
+          ['mgmt_only', current_bmc.mgmt_only | default(none), true],
+          ['status', current_bmc.status.name | default(none), sync_in_curated_status_name]
+        ] -%}
+      {%- if pair[1] != pair[2] -%}
+      {%- set fields.value = fields.value | combine({pair[0]: {'old': pair[1], 'new': pair[2]}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- if current_bmc.custom_field_data.sync_source | default('')
+          != wanted.sync_in_curated_bmc_custom_fields.sync_source -%}
+      {%- set fields.value = fields.value | combine({'custom_fields.sync_source': {
+        'old': current_bmc.custom_field_data.sync_source | default(none),
+        'new': wanted.sync_in_curated_bmc_custom_fields.sync_source
+      }}) -%}
+      {%- endif -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'device_interface', 'identifier': bmc_identifier, 'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ {'create': out.create, 'update': out.update, 'delete': out.delete} | to_json | from_json }}
+  when: "'dcim' in sync_in_curated_components"
+
+- name: Build the curated hardware family plan
+  ansible.builtin.set_fact:
+    sync_in_curated_hardware_plan: >-
+      {%- set data = sync_in_curated_snapshot.data -%}
+      {%- set out = namespace(create=[], update=[], delete=[]) -%}
+      {%- for name in sync_in_curated_missing_manufacturers
+          if name in (sync_in_curated_hardware_devices
+            | map(attribute='sync_in_curated_type_manufacturer') | list)
+            or name in (sync_in_curated_module_rows
+            | map(attribute='sync_in_curated_module_type_manufacturer') | list) -%}
+      {%- set out.create = out.create + [{'object_kind': 'manufacturer', 'identifier': name}] -%}
+      {%- endfor -%}
+      {%- for name in sync_in_curated_missing_roles
+          if name in sync_in_curated_hardware_devices | map(attribute='sync_in_curated_role') | list -%}
+      {%- set out.create = out.create + [{'object_kind': 'device_role', 'identifier': name}] -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_curated_locations -%}
+      {%- set current = data.locations | default([]) | selectattr('name', 'equalto', wanted.name)
+          | selectattr('parent.name', 'equalto', wanted.parent_location) | list | first | default({}) -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{
+        'object_kind': 'location', 'identifier': wanted.parent_location ~ '/' ~ wanted.name
+      }] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- for pair in [
+          ['location_type', current.location_type.name | default(none), wanted.location_type],
+          ['status', current.status.name | default(none), wanted.status]
+        ] -%}
+      {%- if pair[1] != pair[2] -%}
+      {%- set fields.value = fields.value | combine({pair[0]: {'old': pair[1], 'new': pair[2]}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- if current.custom_field_data.sync_source | default('') != wanted.custom_fields.sync_source -%}
+      {%- set fields.value = fields.value | combine({'custom_fields.sync_source': {
+        'old': current.custom_field_data.sync_source | default(none), 'new': wanted.custom_fields.sync_source
+      }}) -%}
+      {%- endif -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'location', 'identifier': wanted.parent_location ~ '/' ~ wanted.name,
+        'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_curated_hardware_devices -%}
+      {%- set current = (data.devices | default([]) | selectattr('name', 'equalto', wanted.hw_id)
+          | list | first | default({})) -%}
+      {%- set type_exists = data.device_types | default([])
+          | selectattr('model', 'equalto', wanted.sync_in_curated_type_model)
+          | selectattr('manufacturer.name', 'equalto', wanted.sync_in_curated_type_manufacturer)
+          | list | length > 0 -%}
+      {%- if not type_exists -%}
+      {%- set out.create = out.create + [{
+        'object_kind': 'device_type',
+        'identifier': wanted.sync_in_curated_type_manufacturer ~ '/' ~ wanted.sync_in_curated_type_model
+      }] -%}
+      {%- endif -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{'object_kind': 'device', 'identifier': wanted.hw_id}] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- for pair in [
+          ['device_type', current.device_type.model | default(none), wanted.sync_in_curated_type_model],
+          ['role', current.role.name | default(none), wanted.sync_in_curated_role],
+          ['location', current.location.name | default(none), wanted.location],
+          ['status', current.status.name | default(none), wanted.sync_in_curated_status],
+          ['asset_tag', current.asset_tag | default(none), wanted.hw_id]
+        ] -%}
+      {%- if pair[1] != pair[2] -%}
+      {%- set fields.value = fields.value | combine({pair[0]: {'old': pair[1], 'new': pair[2]}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- if wanted.sync_in_curated_serial | default('', true) | length > 0
+          and current.serial | default('', true) != wanted.sync_in_curated_serial -%}
+      {%- set fields.value = fields.value | combine({'serial': {
+        'old': current.serial | default('', true), 'new': wanted.sync_in_curated_serial
+      }}) -%}
+      {%- endif -%}
+      {%- if current.custom_field_data.sync_source | default('') != wanted.sync_in_curated_custom_fields.sync_source -%}
+      {%- set fields.value = fields.value | combine({'custom_fields.sync_source': {
+        'old': current.custom_field_data.sync_source | default(none),
+        'new': wanted.sync_in_curated_custom_fields.sync_source
+      }}) -%}
+      {%- endif -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'device', 'identifier': wanted.hw_id, 'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_curated_module_rows if not wanted.sync_in_curated_drive_suppressed -%}
+      {%- set current_type = data.module_types | default([])
+          | selectattr('model', 'equalto', wanted.sync_in_curated_module_type_model)
+          | selectattr('manufacturer.name', 'equalto', wanted.sync_in_curated_module_type_manufacturer)
+          | list | first | default({}) -%}
+      {%- if not current_type -%}
+      {%- set out.create = out.create + [{
+        'object_kind': 'module_type',
+        'identifier': wanted.sync_in_curated_module_type_manufacturer ~ '/' ~ wanted.sync_in_curated_module_type_model
+      }] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- if current_type.part_number | default('') != wanted.sync_in_curated_module_type_part_number -%}
+      {%- set fields.value = fields.value | combine({'part_number': {
+        'old': current_type.part_number | default(none), 'new': wanted.sync_in_curated_module_type_part_number
+      }}) -%}
+      {%- endif -%}
+      {%- if current_type.custom_field_data.sync_source | default('')
+          != wanted.sync_in_curated_module_type_custom_fields.sync_source -%}
+      {%- set fields.value = fields.value | combine({'custom_fields.sync_source': {
+        'old': current_type.custom_field_data.sync_source | default(none),
+        'new': wanted.sync_in_curated_module_type_custom_fields.sync_source
+      }}) -%}
+      {%- endif -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'module_type',
+        'identifier': wanted.sync_in_curated_module_type_manufacturer ~ '/' ~ wanted.sync_in_curated_module_type_model,
+        'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_curated_module_bays -%}
+      {%- set current = data.module_bays | default([])
+          | selectattr('parent_device.name', 'equalto', wanted.parent_device)
+          | selectattr('name', 'equalto', wanted.name) | list | first | default({}) -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{
+        'object_kind': 'module_bay', 'identifier': wanted.parent_device ~ ':' ~ wanted.name
+      }] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- if current.position | default('') != wanted.position -%}
+      {%- set fields.value = fields.value | combine({'position': {
+        'old': current.position | default(none), 'new': wanted.position
+      }}) -%}
+      {%- endif -%}
+      {%- if current.custom_field_data.sync_source | default('') != wanted.custom_fields.sync_source -%}
+      {%- set fields.value = fields.value | combine({'custom_fields.sync_source': {
+        'old': current.custom_field_data.sync_source | default(none), 'new': wanted.custom_fields.sync_source
+      }}) -%}
+      {%- endif -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'module_bay', 'identifier': wanted.parent_device ~ ':' ~ wanted.name,
+        'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_curated_module_units -%}
+      {%- set current = data.modules | default([])
+          | selectattr('id', 'equalto', wanted.sync_in_curated_existing_module_id)
+          | list | first | default((data.modules | default([])
+              | selectattr('asset_tag', 'equalto', wanted.asset_tag) | list | first | default({}))) -%}
+      {%- set identifier = wanted.asset_tag -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{'object_kind': 'module', 'identifier': identifier}] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- for pair in [
+          ['asset_tag', current.asset_tag | default(none), wanted.asset_tag],
+          ['status', current.status.name | default(none), wanted.sync_in_curated_status]
+        ] -%}
+      {%- if pair[1] != pair[2] -%}
+      {%- set fields.value = fields.value | combine({pair[0]: {'old': pair[1], 'new': pair[2]}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- if wanted.sync_in_curated_serial | default('', true) | length > 0
+          and current.serial | default('', true) != wanted.sync_in_curated_serial -%}
+      {%- set fields.value = fields.value | combine({'serial': {
+        'old': current.serial | default('', true), 'new': wanted.sync_in_curated_serial
+      }}) -%}
+      {%- endif -%}
+      {%- if current.custom_field_data.sync_source | default('') != wanted.sync_in_curated_custom_fields.sync_source -%}
+      {%- set fields.value = fields.value | combine({'custom_fields.sync_source': {
+        'old': current.custom_field_data.sync_source | default(none),
+        'new': wanted.sync_in_curated_custom_fields.sync_source
+      }}) -%}
+      {%- endif -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'module', 'identifier': identifier, 'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_curated_providers -%}
+      {%- set current = (data.providers | default([]) | selectattr('name', 'equalto', wanted.name)
+          | list | first | default({})) -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{'object_kind': 'provider', 'identifier': wanted.name}] -%}
+      {%- elif current.custom_field_data.sync_source | default('') != wanted.custom_fields.sync_source -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'provider', 'identifier': wanted.name,
+        'changed_fields': {'custom_fields.sync_source': {
+          'old': current.custom_field_data.sync_source | default(none), 'new': wanted.custom_fields.sync_source
+        }}
+      }] -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_curated_circuits -%}
+      {%- set current = (data.circuits | default([]) | selectattr('cid', 'equalto', wanted.circuit_id)
+          | list | first | default({})) -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{'object_kind': 'circuit', 'identifier': wanted.circuit_id}] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- for pair in [
+          ['description', current.description | default(''), wanted.description],
+          ['status', current.status.name | default(none), wanted.status],
+          ['provider', current.provider.name | default(none), wanted.provider],
+          ['circuit_type', current.circuit_type.name | default(none), wanted.circuit_type]
+        ] -%}
+      {%- if pair[1] != pair[2] -%}
+      {%- set fields.value = fields.value | combine({pair[0]: {'old': pair[1], 'new': pair[2]}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- if current.custom_field_data.sync_source | default('') != wanted.custom_fields.sync_source -%}
+      {%- set fields.value = fields.value | combine({'custom_fields.sync_source': {
+        'old': current.custom_field_data.sync_source | default(none), 'new': wanted.custom_fields.sync_source
+      }}) -%}
+      {%- endif -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'circuit', 'identifier': wanted.circuit_id, 'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for item in sync_in_curated_modules_to_delete -%}
+      {%- set out.delete = out.delete + [{
+        'object_kind': 'module', 'identifier': item.asset_tag ~ ' (serial ' ~ (item.serial | default('unknown')) ~ ')'
+      }] -%}
+      {%- endfor -%}
+      {%- for item in sync_in_curated_module_bays_to_delete -%}
+      {%- set out.delete = out.delete + [{
+        'object_kind': 'module_bay', 'identifier': item.parent_device.name | default('unknown') ~ ':' ~ item.name
+      }] -%}
+      {%- endfor -%}
+      {{ {'create': out.create, 'update': out.update, 'delete': out.delete} | to_json | from_json }}
+  when: "'hardware' in sync_in_curated_components"
+
+- name: Build the curated network family plan
+  ansible.builtin.set_fact:
+    sync_in_curated_network_plan: >-
+      {%- set data = sync_in_curated_snapshot.data -%}
+      {%- set out = namespace(create=[], update=[], delete=[]) -%}
+      {%- for wanted in sync_in_curated_vlans -%}
+      {%- set current = (data.vlans | default([]) | selectattr('vid', 'equalto', wanted.vid)
+          | list | first | default({})) -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{'object_kind': 'vlan', 'identifier': wanted.vid | string}] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- for pair in [
+          ['name', current.name | default(none), wanted.name],
+          ['status', current.status.name | default(none), wanted.status]
+        ] -%}
+      {%- if pair[1] != pair[2] -%}
+      {%- set fields.value = fields.value | combine({pair[0]: {'old': pair[1], 'new': pair[2]}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'vlan', 'identifier': wanted.vid | string, 'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_curated_prefixes -%}
+      {%- set current = (data.prefixes | default([]) | selectattr('prefix', 'equalto', wanted.prefix)
+          | list | first | default({})) -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{'object_kind': 'prefix', 'identifier': wanted.prefix}] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- for pair in [
+          ['status', current.status.name | default(none), wanted.status],
+          ['type', current.type | default(none), wanted.type],
+          ['vlan', current.vlan.vid | default(none), wanted.vlan_vid],
+          ['role', current.role.name | default(none), wanted.role]
+        ] -%}
+      {%- if pair[1] != pair[2] -%}
+      {%- set fields.value = fields.value | combine({pair[0]: {'old': pair[1], 'new': pair[2]}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'prefix', 'identifier': wanted.prefix, 'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for wanted in sync_in_curated_reservations -%}
+      {%- set current = data.ip_addresses | default([])
+          | selectattr('address', 'equalto', wanted.sync_in_curated_address) | list | first | default({}) -%}
+      {%- if not current -%}
+      {%- set out.create = out.create + [{
+        'object_kind': 'ip_reservation', 'identifier': wanted.sync_in_curated_address
+      }] -%}
+      {%- else -%}
+      {%- set fields = namespace(value={}) -%}
+      {%- for pair in [
+          ['dns_name', current.dns_name | default(none), wanted.dns_name],
+          ['status', current.status.name | default(none), wanted.sync_in_curated_status],
+          ['type', current.type | default(none), 'Host']
+        ] -%}
+      {%- if pair[1] != pair[2] -%}
+      {%- set fields.value = fields.value | combine({pair[0]: {'old': pair[1], 'new': pair[2]}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- if fields.value | length > 0 -%}
+      {%- set out.update = out.update + [{
+        'object_kind': 'ip_reservation', 'identifier': wanted.sync_in_curated_address,
+        'changed_fields': fields.value
+      }] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ {'create': out.create, 'update': out.update, 'delete': out.delete} | to_json | from_json }}
+  when:
+    - "'dcim' in sync_in_curated_components"
+    - "'hardware' in sync_in_curated_components"
+
+- name: Merge selected curated family plans
+  ansible.builtin.set_fact:
+    sync_in_plan: >-
+      {{ sync_in_plan
+         | combine({'dcim': sync_in_curated_dcim_plan}
+           if 'dcim' in sync_in_curated_components else {}, recursive=true, list_merge='append')
+         | combine({'hardware': sync_in_curated_hardware_plan}
+           if 'hardware' in sync_in_curated_components else {}, recursive=true, list_merge='append')
+         | combine({'network': sync_in_curated_network_plan}
+           if 'dcim' in sync_in_curated_components and 'hardware' in sync_in_curated_components else {},
+           recursive=true, list_merge='append') }}
