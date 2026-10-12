@@ -1,0 +1,22 @@
+---
+- name: Prove the role rejects a plain-http Nautobot URL before it sends a credential
+  block:
+    - name: Include the fetch tasks with a plain-http URL
+      ansible.builtin.include_role:
+        name: "{{ case.role }}"
+        tasks_from: fetch.yml
+      vars:
+        sync_out_nautobot_url: http://nautobot.example.test
+        drift_nautobot_url: http://nautobot.example.test
+        preflight_nautobot_url: http://nautobot.example.test
+
+    - name: Fail when the role accepted the URL
+      ansible.builtin.fail:
+        msg: "The {{ case.role }} role accepted a plain-http URL."
+  rescue:
+    - name: Confirm the failure names the input
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_failed_result.results | map(attribute='msg') | list ==
+            [case.var ~ ' must be an https URL; http is accepted only for a loopback host.']

@@ -1,0 +1,68 @@
+---
+- name: Check the saved GraphQL query response
+  ansible.builtin.assert:
+    that:
+      - sync_out_query_response.json.data is defined
+      - sync_out_query_response.json.errors | default([], true) | length == 0
+    fail_msg: The saved GraphQL query returned errors or no data.
+
+- name: Check the export collections are available
+  ansible.builtin.assert:
+    that:
+      - sync_out_query_response.json.data.vlans is sequence
+      - sync_out_query_response.json.data.prefixes is sequence
+      - sync_out_query_response.json.data.ip_addresses is sequence
+      - sync_out_query_response.json.data.devices is sequence
+      - sync_out_query_response.json.data.racks is sequence
+      - sync_out_query_response.json.data.interfaces is sequence
+    fail_msg: The saved GraphQL query is missing an export collection.
+
+- name: Require devices and IP addresses in the export
+  ansible.builtin.assert:
+    that:
+      - sync_out_query_response.json.data.devices | length > 0
+      - sync_out_query_response.json.data.ip_addresses | length > 0
+    fail_msg: The export has no devices or no IP addresses; the token may lack view permission.
+
+- name: Reject racks without a site
+  ansible.builtin.assert:
+    that:
+      - >-
+        sync_out_query_response.json.data.racks
+        | map(attribute='location') | map('default', {}, true)
+        | map(attribute='name', default='') | reject('truthy') | list | length == 0
+    fail_msg: A source rack is missing its site.
+
+- name: Combine the exported source records
+  ansible.builtin.set_fact:
+    sync_out_export_records: >-
+      {{ sync_out_query_response.json.data.vlans
+      + sync_out_query_response.json.data.prefixes
+      + sync_out_query_response.json.data.ip_addresses
+      + sync_out_query_response.json.data.devices
+      + sync_out_query_response.json.data.racks
+      + sync_out_query_response.json.data.interfaces }}
+
+- name: Require an update timestamp on each exported record
+  ansible.builtin.assert:
+    that:
+      - sync_out_export_records | length > 0
+      - >-
+        (sync_out_export_records
+         | selectattr('last_updated', 'defined')
+         | list
+         | length)
+        == (sync_out_export_records | length)
+    fail_msg: Every exported source record must include last_updated.
+
+- name: Set the newest source update timestamp
+  ansible.builtin.set_fact:
+    sync_out_data_as_of: "{{ sync_out_export_records | map(attribute='last_updated') | max }}"
+
+- name: Build the export document
+  ansible.builtin.set_fact:
+    sync_out_document: "{{ lookup('ansible.builtin.template', 'export.json.j2') | from_json }}"
+
+- name: Log the export freshness timestamp
+  ansible.builtin.debug:
+    msg: "Data as of {{ sync_out_data_as_of }}"

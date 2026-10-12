@@ -1,0 +1,11 @@
+---
+- name: Publish the export document to object storage
+  amazon.aws.s3_object:
+    bucket: "{{ sync_out_object_storage_bucket }}"
+    object: "{{ sync_out_object_storage_key }}"
+    content: "{{ sync_out_document | to_nice_json }}"
+    headers:
+      ContentType: application/json
+    mode: put
+  when: not ansible_check_mode
+  no_log: true
