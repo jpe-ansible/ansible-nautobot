@@ -1,0 +1,59 @@
+---
+- name: Require an https Nautobot URL
+  ansible.builtin.include_role:
+    name: url_guard
+  vars:
+    url_guard_urls:
+      - {name: drift_nautobot_url, url: "{{ drift_nautobot_url }}"}
+
+- name: Read Nautobot virtual machines and tags
+  ansible.builtin.uri:
+    url: "{{ drift_nautobot_url }}/api/graphql/"
+    method: POST
+    headers:
+      Authorization: "Token {{ drift_read_token }}"
+      Accept: application/json
+    body_format: json
+    body:
+      query: |
+        {
+          virtual_machines {
+            name
+            tags { name }
+          }
+        }
+    status_code: 200
+    timeout: 45
+    validate_certs: true
+  check_mode: false
+  register: drift_nautobot_graphql
+  failed_when: >-
+    (drift_nautobot_graphql.status | default(-1)) != 200
+    or (drift_nautobot_graphql.json.errors | default([], true) | length) > 0
+  # Retry transient failures only (network errors, 429, 5xx); a client error will not change on retry.
+  until: drift_nautobot_graphql is not failed or (drift_nautobot_graphql.status | default(-1)) in [400, 401, 403, 404]
+  retries: 2
+  delay: 15
+  no_log: true
+
+- name: Read Nautobot REST object counts
+  ansible.builtin.uri:
+    url: "{{ drift_nautobot_url }}/api/{{ item.path }}"
+    method: GET
+    headers:
+      Authorization: "Token {{ drift_read_token }}"
+      Accept: application/json
+    status_code: 200
+    timeout: 30
+    validate_certs: true
+  loop: "{{ drift_rest_count_endpoints }}"
+  loop_control:
+    label: "{{ item.key }}"
+  check_mode: false
+  register: drift_rest_count_responses
+  until: >-
+    drift_rest_count_responses is not failed
+    or (drift_rest_count_responses.status | default(-1)) in [400, 401, 403, 404]
+  retries: 2
+  delay: 15
+  no_log: true

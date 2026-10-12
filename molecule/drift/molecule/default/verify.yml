@@ -1,0 +1,134 @@
+---
+- name: Verify drift evaluation
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Evaluate fixture no drift
+      ansible.builtin.include_role:
+        name: drift
+        tasks_from: evaluate.yml
+        rolespec_validate: false
+      vars:
+        drift_source_groups: [vms, extra_vms]
+        drift_source_inventory:
+          vms:
+            guest-a:
+              hostname: guest-a
+              tags: [application]
+          extra_vms:
+            guest-b:
+              hostname: guest-b
+              tags: []
+        drift_nautobot_graphql:
+          json:
+            data:
+              virtual_machines:
+                - name: guest-a
+                  tags:
+                    - name: application
+                - name: guest-b
+                  tags: []
+        drift_rest_count_responses:
+          results:
+            - item:
+                key: ipam/vlans
+              json:
+                count: 7
+
+    - name: Assert fixture no drift reports info
+      ansible.builtin.assert:
+        that:
+          - drift_event_envelope.event.severity == 'info'
+          - drift_event_envelope.event.missing_in_nautobot == []
+          - drift_event_envelope.event.extra_in_nautobot == []
+          - drift_event_envelope.event.tag_drift == []
+          - drift_event_envelope.event.counts['ipam/vlans'] == 7
+          - drift_event_envelope.event.counts.missing_in_nautobot == 0
+          - drift_event_envelope.event.counts.extra_in_nautobot == 0
+          - drift_event_envelope.event.counts.tag_drift == 0
+
+    - name: Evaluate fixture missing source guest
+      ansible.builtin.include_role:
+        name: drift
+        tasks_from: evaluate.yml
+        rolespec_validate: false
+      vars:
+        drift_source_inventory:
+          containers:
+            guest-missing:
+              hostname: guest-missing
+              tags: []
+        drift_nautobot_graphql:
+          json:
+            data:
+              virtual_machines: []
+        drift_rest_count_responses:
+          results: []
+
+    - name: Assert fixture missing guest reports critical
+      ansible.builtin.assert:
+        that:
+          - drift_event_envelope.event.severity == 'critical'
+          - drift_event_envelope.event.missing_in_nautobot == ['guest-missing']
+
+    - name: Evaluate fixture extra Nautobot VM
+      ansible.builtin.include_role:
+        name: drift
+        tasks_from: evaluate.yml
+        rolespec_validate: false
+      vars:
+        drift_source_inventory: {}
+        drift_nautobot_graphql:
+          json:
+            data:
+              virtual_machines:
+                - name: guest-extra
+                  tags: []
+        drift_rest_count_responses:
+          results: []
+
+    - name: Assert fixture extra VM reports critical
+      ansible.builtin.assert:
+        that:
+          - drift_event_envelope.event.severity == 'critical'
+          - drift_event_envelope.event.extra_in_nautobot == ['guest-extra']
+
+    - name: Evaluate fixture tag drift only
+      ansible.builtin.include_role:
+        name: drift
+        tasks_from: evaluate.yml
+        rolespec_validate: false
+      vars:
+        drift_source_inventory:
+          docker_vms:
+            guest-tagged:
+              hostname: guest-tagged
+              tags: [application, managed]
+        drift_nautobot_graphql:
+          json:
+            data:
+              virtual_machines:
+                - name: guest-tagged
+                  tags:
+                    - name: application
+        drift_rest_count_responses:
+          results: []
+
+    - name: Assert fixture tag drift reports warning
+      ansible.builtin.assert:
+        that:
+          - drift_event_envelope.event.severity == 'warning'
+          - drift_event_envelope.event.tag_drift | length == 1
+          - drift_event_envelope.event.tag_drift[0].name == 'guest-tagged'
+          - drift_event_envelope.event.tag_drift[0].missing_tags == ['managed']
+
+    - name: Assert fixture event envelope has required keys
+      ansible.builtin.assert:
+        that:
+          - >-
+            drift_event_envelope.keys() | list | sort ==
+            ['event', 'host', 'index', 'source', 'sourcetype', 'time'] | sort
+          - drift_event_envelope.sourcetype == 'nautobot:drift'
+          - drift_event_envelope.index == 'ansible'
+          - drift_event_envelope.event.keys() | list | sort ==
+            ['counts', 'extra_in_nautobot', 'missing_in_nautobot', 'severity', 'tag_drift', 'unmodelled_domains'] | sort
