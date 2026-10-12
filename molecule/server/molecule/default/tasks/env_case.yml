@@ -1,0 +1,26 @@
+---
+- name: Run the environment entry validation for one case
+  block:
+    - name: Validate the case entries
+      ansible.builtin.include_role:
+        name: server
+        tasks_from: env_validate
+      vars:
+        server_env: "{{ server_env_case.env }}"
+
+    - name: Record that the case passed validation
+      ansible.builtin.set_fact:
+        server_env_case_rejected: false
+        server_env_case_message: ""
+  rescue:
+    - name: Record that the case failed validation
+      ansible.builtin.set_fact:
+        server_env_case_rejected: true
+        server_env_case_message: "{{ ansible_failed_result.msg | default('') }}"
+
+- name: Assert the validation outcome matches the case
+  ansible.builtin.assert:
+    that:
+      - server_env_case_rejected | bool == server_env_case.rejected
+      - not server_env_case.rejected or 'line break' in server_env_case_message
+    fail_msg: "Environment validation gave the wrong outcome for: {{ server_env_case.name }}."

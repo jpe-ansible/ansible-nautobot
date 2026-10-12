@@ -1,0 +1,9 @@
+---
+- name: Require well-formed environment keys and single-line values
+  ansible.builtin.assert:
+    that:
+      - server_env.keys() | reject('match', '^[A-Za-z_][A-Za-z0-9_]*\Z') | list | length == 0
+      - server_env.values() | map('string') | select('search', '[\r\n]') | list | length == 0
+    fail_msg: >-
+      Every server_env key must match [A-Za-z_][A-Za-z0-9_]* and no server_env value may contain a
+      line break.

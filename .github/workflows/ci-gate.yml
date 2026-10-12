@@ -23,6 +23,10 @@ jobs:
     with:
       molecule: false
       molecule_scenario_filters: |
+        server:
+          - 'roles/server/**'
+          - 'roles/url_guard/**'
+          - 'molecule/server/**'
         sync_in:
           - 'roles/sync_in/**'
           - 'roles/url_guard/**'

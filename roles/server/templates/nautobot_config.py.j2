@@ -1,0 +1,54 @@
+# {{ ansible_managed }}
+import os
+
+from nautobot.core.settings import *  # noqa: F403 - inherit Nautobot defaults, then override below
+
+ALLOWED_HOSTS = {{ server_allowed_hosts | to_json }}
+SECRET_KEY = os.environ["NAUTOBOT_SECRET_KEY"]
+
+DATABASES = {
+    "default": {
+        "NAME": "{{ server_db_name }}",
+        "USER": "{{ server_db_user }}",
+        "PASSWORD": os.environ["NAUTOBOT_DB_PASSWORD"],
+        "HOST": "{{ server_db_host }}",
+        "PORT": "{{ server_db_port }}",
+        "CONN_MAX_AGE": 300,
+        "ENGINE": "django.db.backends.postgresql",
+    }
+}
+
+REDIS_HOST = "{{ server_redis_host }}"
+REDIS_PORT = {{ server_redis_port }}
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": f"redis://{REDIS_HOST}:{REDIS_PORT}/1",
+        "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+    }
+}
+CELERY_BROKER_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
+
+CSRF_TRUSTED_ORIGINS = [
+{% for host in server_allowed_hosts if host != 'localhost' %}
+    "https://{{ host }}",
+{% endfor %}]
+{% if server_trust_proxy_ssl_header %}
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+{% endif %}
+
+PLUGINS = {{ server_plugins | to_json }}
+PLUGINS_CONFIG = {
+    "nautobot_ssot": {
+        "hide_example_jobs": True,
+        "enable_bootstrap": True,
+        "bootstrap_nautobot_environment_branch": {{ server_bootstrap_environment_branch | to_json }},
+        "bootstrap_models_to_sync": {{ server_bootstrap_models_to_sync | to_json }},
+    },
+    "nautobot_device_onboarding": {},
+}
+
+INSTALLATION_METRICS_ENABLED = False

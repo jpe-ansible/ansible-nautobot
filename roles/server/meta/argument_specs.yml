@@ -1,0 +1,236 @@
+---
+argument_specs:
+  main:
+    short_description: Install and configure the Nautobot application.
+    options:
+      server_root:
+        type: str
+        description: Nautobot installation and configuration directory.
+      server_user:
+        type: str
+        description: System account that owns and runs Nautobot.
+      server_group:
+        type: str
+        description: System group that owns Nautobot files.
+      server_system_packages:
+        type: list
+        elements: str
+        description: Operating system packages required by Nautobot.
+      server_version:
+        type: str
+        description: Pinned Nautobot Python package version.
+      server_ssot_version:
+        type: str
+        description: Pinned Nautobot SSoT Python package version.
+      server_device_onboarding_version:
+        type: str
+        description: Pinned Nautobot Device Onboarding Python package version.
+      server_pip_packages:
+        type: list
+        elements: str
+        description: Python packages installed into the Nautobot virtual environment.
+      server_plugins:
+        type: list
+        elements: str
+        description: Nautobot application plugin names enabled in settings.
+      server_bootstrap_environment_branch:
+        type: str
+        description: SSoT Bootstrap environment branch configured in Nautobot.
+      server_bootstrap_models_to_sync:
+        type: dict
+        description: SSoT Bootstrap model names and enablement values.
+      server_web_port:
+        type: int
+        description: TCP port used by the Nautobot web service.
+      server_web_bind:
+        type: str
+        description: >-
+          Address the Nautobot web service listens on. The default is loopback; set the address that
+          the TLS-terminating proxy reaches when it runs on another host.
+        default: 127.0.0.1
+      server_uwsgi_processes:
+        type: int
+        description: Number of uWSGI worker processes.
+      server_uwsgi_threads:
+        type: int
+        description: Number of uWSGI threads per process.
+      server_db_host:
+        type: str
+        description: Database server name or address.
+      server_db_port:
+        type: int
+        description: Database server port.
+      server_db_name:
+        type: str
+        description: Nautobot database name.
+      server_db_user:
+        type: str
+        description: Database account used by Nautobot.
+      server_db_password:
+        type: str
+        no_log: true
+        description: Database password supplied by the caller.
+      server_redis_host:
+        type: str
+        description: Loopback Redis host name.
+      server_redis_port:
+        type: int
+        description: Redis port.
+      server_ui_fqdn:
+        type: str
+        description: Nautobot UI host name.
+      server_allowed_hosts:
+        type: list
+        elements: str
+        description: Host names accepted by Nautobot and Django.
+      server_trust_proxy_ssl_header:
+        type: bool
+        description: Trust the forwarded HTTPS scheme header from a TLS proxy.
+      server_nautobot_url:
+        type: str
+        description: Nautobot API base URL used for account and permission requests.
+      server_nautobot_validate_certs:
+        type: bool
+        description: Validate Nautobot API certificates.
+      server_manage_app:
+        type: bool
+        description: Install and operate Nautobot when true.
+      server_manage_accounts:
+        type: bool
+        default: true
+        description: Reconcile Nautobot service accounts, permissions, tokens and published token fields.
+      server_secret_key:
+        type: str
+        no_log: true
+        description: >-
+          Optional Django SECRET_KEY supplied by the caller; a non-empty value takes precedence over stored values.
+      server_secret_key_file:
+        type: str
+        description: File where the effective SECRET_KEY is persisted.
+      server_secret_key_path:
+        type: str
+        description: OpenBao KV v2 secret path containing the SECRET_KEY field.
+      server_secret_key_field:
+        type: str
+        description: OpenBao field name used for the SECRET_KEY.
+      server_env:
+        type: dict
+        no_log: true
+        description: Environment values passed to Nautobot management commands and units.
+      server_superuser_name:
+        type: str
+        description: Initial Nautobot superuser name.
+      server_superuser_email:
+        type: str
+        description: Initial Nautobot superuser email address.
+      server_superuser_password:
+        type: str
+        no_log: true
+        description: Initial Nautobot superuser password.
+      server_openbao_addr:
+        type: str
+        description: OpenBao API base URL.
+      server_openbao_mount:
+        type: str
+        description: OpenBao KV v2 mount name.
+      server_openbao_ca_file:
+        type: str
+        description: Controller path to the CA certificate used for OpenBao TLS.
+      server_openbao_token:
+        type: str
+        no_log: true
+        description: OpenBao API token; required when server_manage_app is true.
+      server_inventory_username:
+        type: str
+        description: Inventory reader account name.
+      server_inventory_token_path:
+        type: str
+        description: OpenBao path for the inventory token and URL fields.
+      server_inventory_token_key:
+        type: str
+        description: OpenBao field name for the inventory token.
+      server_inventory_url_key:
+        type: str
+        description: OpenBao field name for the inventory URL.
+      server_inventory_object_types:
+        type: list
+        elements: str
+        description: Nautobot object types readable by the inventory account.
+      server_mcp_username:
+        type: str
+        description: MCP reader account name.
+      server_mcp_token_path:
+        type: str
+        description: OpenBao path for the MCP token and URL fields.
+      server_mcp_token_key:
+        type: str
+        description: OpenBao field name for the MCP token.
+      server_mcp_url_key:
+        type: str
+        description: OpenBao field name for the MCP URL.
+      server_mcp_object_types:
+        type: list
+        elements: str
+        description: Nautobot object types readable by the MCP account.
+      server_pipeline_username:
+        type: str
+        description: Pipeline reader account name.
+      server_pipeline_token_path:
+        type: str
+        description: OpenBao path for the pipeline token and URL fields.
+      server_pipeline_token_key:
+        type: str
+        description: OpenBao field name for the pipeline token.
+      server_pipeline_url_key:
+        type: str
+        description: OpenBao field name for the pipeline URL.
+      server_pipeline_object_types:
+        type: list
+        elements: str
+        description: Nautobot object types readable by the pipeline account.
+      server_bootstrap_repository_name:
+        type: str
+        description: Bootstrap Git repository name used by the inbound sync role.
+      server_bootstrap_job_name:
+        type: str
+        description: Bootstrap Job name used by the inbound sync role.
+      server_write_username:
+        type: str
+        description: Inbound sync writer account name.
+      server_write_token_path:
+        type: str
+        description: OpenBao path for the inbound sync writer token and URL fields.
+      server_write_token_key:
+        type: str
+        description: OpenBao field name for the inbound sync writer token.
+      server_write_url_key:
+        type: str
+        description: OpenBao field name for the inbound sync writer URL.
+      server_write_object_types:
+        type: list
+        elements: str
+        description: Nautobot object types the inbound sync writer may view, add and change.
+      server_write_delete_types:
+        type: list
+        elements: str
+        description: Nautobot object types the inbound sync writer may delete.
+      server_write_reference_types:
+        type: list
+        elements: str
+        description: Shared reference object types the inbound sync writer may view, add and change.
+      server_write_lookup_types:
+        type: list
+        elements: str
+        description: Object types the inbound sync writer may only view.
+      server_temporary_token_description:
+        type: str
+        description: Description of the expiring superuser token, also used to find leftovers from earlier runs.
+      server_temporary_token_minutes:
+        type: int
+        description: Lifetime in minutes of the expiring superuser token.
+      server_local_requirements_file:
+        type: str
+        description: File recording the pinned Python application packages.
+      server_web_answer_url:
+        type: str
+        description: URL polled to verify the Nautobot web service responds.
