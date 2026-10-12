@@ -329,9 +329,8 @@
     - name: Search role tasks for file lookup script input
       ansible.builtin.command:
         argv:
-          - rg
-          - -F
-          - -n
+          - grep
+          - -rFn
           - "lookup('ansible.builtin.file'"
           - "{{ playbook_dir }}/../../../../roles/server/tasks"
       register: server_file_lookup_search
