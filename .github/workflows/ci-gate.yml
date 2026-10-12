@@ -26,6 +26,7 @@ jobs:
         url_guard:
           - 'roles/url_guard/**'
           - 'molecule/url_guard/**'
+          - 'requirements*'
 
   molecule:
     name: Molecule
