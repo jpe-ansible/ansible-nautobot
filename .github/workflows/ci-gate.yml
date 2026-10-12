@@ -1,0 +1,78 @@
+---
+name: CI Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  ci:
+    permissions:
+      contents: read
+      pull-requests: read
+    # renovate: datasource=git-refs depName=https://github.com/dryvist/.github currentValue=v1.12.1
+    uses: dryvist/.github/.github/workflows/_ansible-ci.yml@f9e8814ad8f82e4bc8cdaac73ee49b1ffa6d4cf2 # v1.12.1
+    with:
+      molecule: false
+      molecule_scenario_filters: |
+        server:
+          - 'roles/server/**'
+          - 'roles/url_guard/**'
+          - 'molecule/server/**'
+        sync_in:
+          - 'roles/sync_in/**'
+          - 'roles/url_guard/**'
+          - 'molecule/sync_in/**'
+        sync_out:
+          - 'roles/sync_out/**'
+          - 'roles/url_guard/**'
+          - 'molecule/sync_out/**'
+        preflight:
+          - 'roles/preflight/**'
+          - 'roles/url_guard/**'
+          - 'molecule/preflight/**'
+        drift:
+          - 'roles/drift/**'
+          - 'roles/url_guard/**'
+          - 'molecule/drift/**'
+        url_guard:
+          - 'roles/url_guard/**'
+          - 'molecule/url_guard/**'
+        live:
+          - 'roles/server/defaults/**'
+          - 'roles/sync_in/**'
+          - 'roles/sync_out/**'
+          - 'roles/preflight/**'
+          - 'roles/drift/**'
+          - 'roles/url_guard/**'
+          - 'global_settings.yml'
+          - 'molecule/live/**'
+          - 'requirements*'
+
+  molecule:
+    name: Molecule
+    needs: ci
+    if: ${{ needs.ci.outputs.molecule == 'true' && needs.ci.outputs.molecule_scenarios != '[]' }}
+    uses: ./.github/workflows/_molecule.yml
+    with:
+      scenarios: ${{ needs.ci.outputs.molecule_scenarios }}
+
+  gate:
+    name: Merge Gate
+    needs: [ci, molecule]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all results
+        uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
+        with:
+          allowed-skips: molecule
+          jobs: ${{ toJSON(needs) }}
