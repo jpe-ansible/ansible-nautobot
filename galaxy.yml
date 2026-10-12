@@ -1,0 +1,47 @@
+---
+namespace: jpe_ansible
+name: nautobot
+version: 0.1.0  # x-release-please-version
+readme: README.md
+authors:
+  - jpe-ansible
+description: >-
+  Nautobot collection roles for server management, inbound and outbound synchronization,
+  pre-flight checks, and drift reporting.
+license:
+  - Apache-2.0
+# Exact versions are pinned in requirements.yml, which Renovate maintains.
+dependencies:
+  networktocode.nautobot: "*"
+  community.proxmox: "*"
+  amazon.aws: "*"
+  ansible.utils: "*"
+tags:
+  - nautobot
+  - infrastructure
+  - ansible
+repository: https://github.com/jpe-ansible/ansible-nautobot
+issues: https://github.com/jpe-ansible/ansible-nautobot/issues
+build_ignore:
+  - "*.tar.gz"
+  - .DS_Store
+  - .worktrees
+  - .direnv
+  - .github
+  - .envrc
+  - .ansible
+  - .ansible-lint
+  - .yamllint
+  - .markdownlint-cli2.yaml
+  - .pre-commit-config.yaml
+  - .readme-validator.yaml
+  - .release-please-manifest.json
+  - release-please-config.json
+  - renovate.json
+  - flake.nix
+  - flake.lock
+  - molecule
+  - docs
+  # Bootstrap data is read by Nautobot from the repository, not from the collection archive.
+  - global_settings.yml
+  - develop.yml
