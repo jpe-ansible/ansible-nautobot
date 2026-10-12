@@ -1,0 +1,21 @@
+---
+argument_specs:
+  main:
+    short_description: Reject a credentialed service URL that does not use https.
+    options:
+      url_guard_urls:
+        type: list
+        elements: dict
+        required: true
+        description: URLs that carry a credential, each with the input name used in the failure message.
+        options:
+          name:
+            type: str
+            required: true
+          url:
+            type: str
+            required: true
+      url_guard_allowed_regex:
+        type: str
+        required: false
+        description: Pattern an accepted URL must match.

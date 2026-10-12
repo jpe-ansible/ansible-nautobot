@@ -1,0 +1,20 @@
+---
+- name: Prove the URL is rejected with the input name
+  block:
+    - name: Include the role with the rejected URL
+      ansible.builtin.include_role:
+        name: url_guard
+      vars:
+        url_guard_urls:
+          - {name: "{{ case.name }}", url: "{{ case.url }}"}
+
+    - name: Fail when the policy accepted the URL
+      ansible.builtin.fail:
+        msg: "The policy accepted {{ case.name }}."
+  rescue:
+    - name: Confirm the failure names the input
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_failed_result.results | map(attribute='msg') | list ==
+            [case.name ~ ' must be an https URL; http is accepted only for a loopback host.']

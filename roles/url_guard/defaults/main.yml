@@ -1,0 +1,3 @@
+---
+# https, or http for a loopback host only (a local test service).
+url_guard_allowed_regex: '^(https://|http://(127\.0\.0\.1|localhost|\[::1\])([:/]|$))'
