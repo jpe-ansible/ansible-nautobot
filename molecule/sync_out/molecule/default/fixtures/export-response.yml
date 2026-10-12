@@ -1,0 +1,53 @@
+---
+sync_out_fixture_response:
+  json:
+    # The saved-query run endpoint answers errors: null when the query succeeds.
+    errors: null
+    data:
+      vlans:
+        - vid: 100
+          name: Servers
+          vlan_group:
+            name: Core
+          last_updated: "2026-10-01T10:00:00Z"
+      prefixes:
+        - prefix: 192.0.2.0/24
+          vlan:
+            vid: 100
+          role:
+            name: Servers
+          last_updated: "2026-10-01T10:10:00Z"
+      ip_addresses:
+        - address: 192.0.2.11/24
+          dns_name: app.example.test
+          last_updated: "2026-10-01T10:20:00Z"
+      devices:
+        - name: node-1
+          role:
+            name: compute
+          rack:
+            name: Rack 1
+          last_updated: "2026-10-01T10:30:00Z"
+          interfaces:
+            - name: idrac
+              mgmt_only: false
+              mac_address: "aa:bb:cc:dd:ee:01"
+              ip_addresses:
+                - address: 192.0.2.10/24
+            - name: eth0
+              mgmt_only: false
+              mac_address: "aa:bb:cc:dd:ee:02"
+              ip_addresses:
+                - address: 192.0.2.11/24
+      racks:
+        - name: Rack 1
+          location:
+            name: Site A
+          last_updated: "2026-10-01T10:40:00Z"
+      interfaces:
+        - name: eth0
+          device:
+            name: node-1
+          mac_address: "aa:bb:cc:dd:ee:02"
+          mgmt_only: false
+          last_updated: "2026-10-01T10:50:00Z"

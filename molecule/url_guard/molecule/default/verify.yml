@@ -26,3 +26,13 @@
       loop_control:
         loop_var: case
         label: "{{ case.name }}"
+
+    - name: Reject a plain-http URL in each role that sends a credential
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/reject_role.yml"
+      loop:
+        - {role: sync_out, var: sync_out_nautobot_url}
+        - {role: drift, var: drift_nautobot_url}
+        - {role: preflight, var: preflight_nautobot_url}
+      loop_control:
+        loop_var: case
+        label: "{{ case.role }}"

@@ -23,6 +23,10 @@ jobs:
     with:
       molecule: false
       molecule_scenario_filters: |
+        sync_out:
+          - 'roles/sync_out/**'
+          - 'roles/url_guard/**'
+          - 'molecule/sync_out/**'
         drift:
           - 'roles/drift/**'
           - 'roles/url_guard/**'

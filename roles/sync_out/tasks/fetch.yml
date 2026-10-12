@@ -1,0 +1,39 @@
+---
+- name: Require an https Nautobot URL
+  ansible.builtin.include_role:
+    name: url_guard
+  vars:
+    url_guard_urls:
+      - {name: sync_out_nautobot_url, url: "{{ sync_out_nautobot_url }}"}
+
+- name: Find the saved GraphQL query by name
+  ansible.builtin.uri:
+    url: >-
+      {{ (sync_out_nautobot_url | regex_replace('/+$', ''))
+         ~ '/api/extras/graphql-queries/?name='
+         ~ (sync_out_query_name | urlencode) }}
+    method: GET
+    headers:
+      Authorization: "Token {{ sync_out_read_token }}"
+      Accept: application/json
+    return_content: true
+    status_code: 200
+    validate_certs: true
+  register: sync_out_query_lookup
+  no_log: true
+
+- name: Run the saved GraphQL query text on the GraphQL endpoint
+  ansible.builtin.uri:
+    url: "{{ (sync_out_nautobot_url | regex_replace('/+$', '')) ~ '/api/graphql/' }}"
+    method: POST
+    headers:
+      Authorization: "Token {{ sync_out_read_token }}"
+      Accept: application/json
+    body_format: json
+    body:
+      query: "{{ sync_out_query_lookup.json.results[0].query }}"
+    return_content: true
+    status_code: 200
+    validate_certs: true
+  register: sync_out_query_response
+  no_log: true
