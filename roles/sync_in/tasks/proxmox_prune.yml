@@ -1,0 +1,78 @@
+---
+- name: Remove stale owned virtual machine interfaces
+  networktocode.nautobot.vm_interface:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    id: "{{ item.id }}"
+    state: absent
+  loop: "{{ sync_in_pve_prune_lists.vm_interfaces }}"
+  loop_control:
+    label: interface
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Remove stale owned IP addresses
+  networktocode.nautobot.ip_address:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    id: "{{ item.id }}"
+    state: absent
+  loop: "{{ sync_in_pve_prune_lists.ip_addresses }}"
+  loop_control:
+    label: address
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Remove stale owned virtual machines
+  networktocode.nautobot.virtual_machine:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    id: "{{ item.id }}"
+    state: absent
+  loop: "{{ sync_in_pve_prune_lists.virtual_machines }}"
+  loop_control:
+    label: virtual machine
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Remove stale owned drive inventory items
+  networktocode.nautobot.inventory_item:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    id: "{{ item.id }}"
+    state: absent
+  loop: "{{ sync_in_pve_prune_lists.inventory_items }}"
+  loop_control:
+    label: inventory item
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Remove stale owned node devices
+  networktocode.nautobot.device:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    id: "{{ item.id }}"
+    state: absent
+  loop: "{{ sync_in_pve_prune_lists.devices }}"
+  loop_control:
+    label: device
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Remove stale owned clusters after virtual machines
+  networktocode.nautobot.cluster:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    id: "{{ item.id }}"
+    state: absent
+  loop: "{{ sync_in_pve_prune_lists.clusters }}"
+  loop_control:
+    label: cluster
+  delegate_to: localhost
+  run_once: true
+  no_log: true

@@ -1,0 +1,10 @@
+---
+- name: Read Bootstrap records from Nautobot
+  ansible.builtin.include_tasks: bootstrap_fetch.yml
+
+- name: Plan the Bootstrap synchronization
+  ansible.builtin.include_tasks: bootstrap_plan.yml
+
+- name: Apply the Bootstrap synchronization plan
+  ansible.builtin.include_tasks: bootstrap_apply.yml
+  when: not sync_in_plan_only and not ansible_check_mode

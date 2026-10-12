@@ -1,0 +1,44 @@
+---
+- name: Read the Bootstrap Git Repository record
+  ansible.builtin.uri:
+    url: >-
+      {{ sync_in_nautobot_url | trim('/') ~ '/api/extras/git-repositories/?name=' ~
+         (sync_in_bootstrap_repo_name | urlencode) }}
+    method: GET
+    headers:
+      Authorization: "Token {{ sync_in_read_token }}"
+      Accept: application/json
+    status_code: 200
+    validate_certs: true
+    return_content: true
+  check_mode: false
+  register: sync_in_bootstrap_repository_response
+  no_log: true
+  changed_when: false
+  # Reads are safe to repeat: retry transient failures only, never a client error.
+  until: >-
+    sync_in_bootstrap_repository_response is not failed
+    or (sync_in_bootstrap_repository_response.status | default(-1)) in [400, 401, 403, 404]
+  retries: 2
+  delay: 15
+
+- name: Read the Bootstrap job record
+  ansible.builtin.uri:
+    url: >-
+      {{ sync_in_nautobot_url | trim('/') ~ '/api/extras/jobs/?name=' ~ (sync_in_bootstrap_job_name | urlencode) }}
+    method: GET
+    headers:
+      Authorization: "Token {{ sync_in_read_token }}"
+      Accept: application/json
+    status_code: 200
+    validate_certs: true
+    return_content: true
+  check_mode: false
+  register: sync_in_bootstrap_job_response
+  no_log: true
+  changed_when: false
+  until: >-
+    sync_in_bootstrap_job_response is not failed
+    or (sync_in_bootstrap_job_response.status | default(-1)) in [400, 401, 403, 404]
+  retries: 2
+  delay: 15

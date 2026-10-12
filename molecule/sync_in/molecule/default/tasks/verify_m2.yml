@@ -1,0 +1,233 @@
+---
+- name: Load the adopted interface ownership fixture
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/proxmox/interface_ownership.yml"
+    name: sync_in_m2_interface_fixture
+
+- name: Set the adopted interface ownership inputs
+  ansible.builtin.set_fact:
+    sync_in_pve_components: "{{ sync_in_m2_interface_fixture.sync_in_pve_components }}"
+    sync_in_pve_node_info: "{{ sync_in_m2_interface_fixture.sync_in_pve_node_info }}"
+    sync_in_pve_vm_info: "{{ sync_in_m2_interface_fixture.sync_in_pve_vm_info }}"
+    sync_in_pve_nautobot_snapshot: "{{ sync_in_m2_interface_fixture.sync_in_pve_nautobot_snapshot }}"
+
+- name: Transform the adopted interface ownership fixture
+  ansible.builtin.include_role:
+    name: sync_in
+    tasks_from: proxmox_transform.yml
+
+- name: Assert adopted, owned and new interface address modes
+  ansible.builtin.assert:
+    that:
+      - >-
+        sync_in_pve_interface_records
+        | selectattr('virtual_machine', 'equalto', 'adopted-guest') | list | length == 1
+      - >-
+        sync_in_pve_interface_records
+        | selectattr('virtual_machine', 'equalto', 'adopted-guest')
+        | map(attribute='ip_addresses_state') | first | default('') == 'merge'
+      - >-
+        sync_in_pve_interface_records
+        | selectattr('virtual_machine', 'equalto', 'owned-guest')
+        | map(attribute='ip_addresses_state') | first | default('') == 'replace'
+      - >-
+        sync_in_pve_interface_records
+        | selectattr('virtual_machine', 'equalto', 'new-guest')
+        | map(attribute='ip_addresses_state') | first | default('') == 'replace'
+    fail_msg: Adopted interfaces must merge addresses; owned and new interfaces must replace them.
+
+- name: Reset and build the adopted interface plan
+  ansible.builtin.set_fact:
+    sync_in_plan: {}
+
+- name: Build the adopted interface plan
+  ansible.builtin.include_role:
+    name: sync_in
+    tasks_from: proxmox_plan.yml
+
+- name: Assert the foreign interface plan keeps the existing manual address
+  ansible.builtin.assert:
+    that:
+      - >-
+        '198.51.100.30/32' in
+        (((sync_in_pve_virtualization_plan['update']
+           | selectattr('object_kind', 'equalto', 'vm_interface_ip_association')
+           | selectattr('identifier', 'equalto', 'adopted-guest:net0') | list | first | default({}))
+          .changed_fields | default({})).ip_addresses.new | default([]))
+    fail_msg: The adopted-interface plan omitted the existing manual address.
+
+- name: Load the small-estate prune fixture
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/proxmox/prune_guard.yml"
+
+- name: Set the one-owned-VM removal fixture
+  ansible.builtin.set_fact:
+    sync_in_pve_components: [virtualization]
+    sync_in_pve_node_info:
+      proxmox_nodes: "{{ sync_in_pve_prune_guard_fixture.nodes }}"
+    sync_in_pve_vm_info:
+      proxmox_vms: []
+    sync_in_pve_nautobot_snapshot:
+      data:
+        devices: []
+        inventory_items: []
+        virtual_machines: "{{ sync_in_pve_prune_guard_fixture.owned_vms[:1] }}"
+        ip_addresses: []
+        prefixes: []
+        clusters: []
+        statuses: []
+        roles: []
+        tags: []
+        cluster_types: []
+        manufacturers: []
+        device_types: []
+    sync_in_prune_max_fraction: 0.25
+    sync_in_prune_min_allowance: 1
+
+- name: Allow one removal from one owned VM at the default allowance
+  ansible.builtin.include_role:
+    name: sync_in
+    tasks_from: proxmox_transform.yml
+
+- name: Assert the single-VM removal passes the default allowance
+  ansible.builtin.assert:
+    that:
+      - sync_in_prune_min_allowance | int == 1
+      - sync_in_pve_family_owned_counts.virtualization | int == 1
+      - sync_in_pve_family_prune_counts.virtualization | int == 1
+      - sync_in_pve_transform_passed
+
+- name: Set the two-of-three owned-VM removal fixture
+  ansible.builtin.set_fact:
+    sync_in_pve_vm_info:
+      proxmox_vms:
+        - "{{ sync_in_pve_prune_guard_fixture.live_guest }}"
+    sync_in_pve_nautobot_snapshot:
+      data:
+        devices: []
+        inventory_items: []
+        virtual_machines: "{{ sync_in_pve_prune_guard_fixture.owned_vms }}"
+        ip_addresses: []
+        prefixes: []
+        clusters: []
+        statuses: []
+        roles: []
+        tags: []
+        cluster_types: []
+        manufacturers: []
+        device_types: []
+
+- name: Reject two removals from three owned VMs above the allowance and fraction
+  block:
+    - name: Transform the two-of-three owned-VM removal fixture
+      ansible.builtin.include_role:
+        name: sync_in
+        tasks_from: proxmox_transform.yml
+    - name: Fail when the two-of-three prune is accepted
+      ansible.builtin.fail:
+        msg: The two-of-three prune was accepted above the configured guard.
+  rescue:
+    - name: Assert the two-of-three prune reports its fraction and allowance
+      ansible.builtin.assert:
+        that:
+          - sync_in_pve_family_owned_counts.virtualization | int == 3
+          - sync_in_pve_family_prune_counts.virtualization | int == 2
+          - >-
+            ansible_failed_result.results | selectattr('failed', 'defined') | selectattr('failed')
+            | map(attribute='msg') | list
+            == ['Proxmox prune exceeds sync_in_prune_max_fraction for virtualization; count exceeds '
+                ~ 'sync_in_prune_min_allowance (1)']
+
+- name: Set the zero-allowance one-VM removal fixture
+  ansible.builtin.set_fact:
+    sync_in_pve_vm_info:
+      proxmox_vms: []
+    sync_in_pve_nautobot_snapshot:
+      data:
+        devices: []
+        inventory_items: []
+        virtual_machines: "{{ sync_in_pve_prune_guard_fixture.owned_vms[:1] }}"
+        ip_addresses: []
+        prefixes: []
+        clusters: []
+        statuses: []
+        roles: []
+        tags: []
+        cluster_types: []
+        manufacturers: []
+        device_types: []
+    sync_in_prune_min_allowance: 0
+
+- name: Reject one removal when the minimum allowance is zero
+  block:
+    - name: Transform the zero-allowance one-VM removal fixture
+      ansible.builtin.include_role:
+        name: sync_in
+        tasks_from: proxmox_transform.yml
+    - name: Fail when the zero-allowance prune is accepted
+      ansible.builtin.fail:
+        msg: The zero-allowance prune was accepted above the configured fraction.
+  rescue:
+    - name: Assert the zero-allowance prune reports the fraction and allowance
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_failed_result.results | selectattr('failed', 'defined') | selectattr('failed')
+            | map(attribute='msg') | list
+            == ['Proxmox prune exceeds sync_in_prune_max_fraction for virtualization; count exceeds '
+                ~ 'sync_in_prune_min_allowance (0)']
+
+- name: Load the equal Bootstrap repository fixture for branch checks
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/bootstrap/repository_equal.yml"
+
+- name: Set differing Bootstrap branch input
+  ansible.builtin.set_fact:
+    sync_in_bootstrap_repo_name: Nautobot Bootstrap
+    sync_in_bootstrap_repo_url: https://example.invalid/nautobot.git
+    sync_in_bootstrap_branch: main
+    sync_in_bootstrap_sync_result:
+      status: SUCCESS
+    sync_in_bootstrap_final_job_result:
+      status: SUCCESS
+    sync_in_plan: {}
+    sync_in_plan_only: true
+
+- name: Reject a Bootstrap branch that differs from the data definition
+  block:
+    - name: Evaluate the differing Bootstrap branch
+      ansible.builtin.include_role:
+        name: sync_in
+        tasks_from: bootstrap_plan.yml
+    - name: Fail when the differing Bootstrap branch is accepted
+      ansible.builtin.fail:
+        msg: The mismatched Bootstrap branch was accepted.
+  rescue:
+    - name: Assert the Bootstrap branch mismatch message
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_failed_result.msg
+            == 'sync_in_bootstrap_branch must match the default Git Repository branch in develop.yml.'
+
+- name: Set matching Bootstrap branch input
+  ansible.builtin.set_fact:
+    sync_in_bootstrap_branch: develop
+    sync_in_plan: {}
+
+- name: Evaluate a matching Bootstrap branch
+  ansible.builtin.include_role:
+    name: sync_in
+    tasks_from: bootstrap_plan.yml
+
+- name: Assert the Bootstrap branch and deletion-reporting limit
+  ansible.builtin.assert:
+    that:
+      - sync_in_bootstrap_repo_action == 'unchanged'
+      - sync_in_plan.bootstrap.delete_reported == false
+      - sync_in_plan.bootstrap.delete == []
+
+- name: Restore the shared prune fraction fixture state
+  ansible.builtin.set_fact:
+    sync_in_prune_max_fraction: 1.0
+    sync_in_prune_min_allowance: 1

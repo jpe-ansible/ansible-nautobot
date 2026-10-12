@@ -1,0 +1,30 @@
+---
+sync_in_racks: []
+sync_in_devices: []
+sync_in_hardware_devices: []
+sync_in_hardware_modules:
+  - hw_id: HDD-ROW
+    quantity: 1
+    category: HDD 3.5
+    manufacturer: Example
+    model: Hard Disk Module
+    status: Active
+    location: parts
+    installed_in: device-b
+sync_in_wan_circuits: []
+sync_in_vlans: []
+sync_in_prefixes: []
+sync_in_reservations: []
+sync_in_curated_snapshot:
+  data:
+    devices:
+      - name: device-b
+    modules: []
+    module_bays: []
+    inventory_items:
+      - name: Drive example
+        discovered: false
+        device: {name: device-b}
+    locations:
+      - name: site-a
+        parent: null

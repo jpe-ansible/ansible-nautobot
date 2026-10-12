@@ -1,0 +1,116 @@
+---
+sync_in_prune_max_fraction: 1.0
+sync_in_pve_components:
+  - nodes
+sync_in_pve_node_info:
+  proxmox_nodes:
+    - node: source-a
+      status: online
+      maxmem: 8589934592
+    - node: source-b
+      status: online
+      maxmem: 8589934592
+    - node: source-c
+      status: online
+      maxmem: 8589934592
+sync_in_pve_vm_info:
+  proxmox_vms: []
+sync_in_pve_disk_results:
+  results: []
+sync_in_pve_node_map:
+  - name: source-a
+    nautobot_device_name: device-a
+    management_dns_name: reservation-a
+  - name: source-b
+  - name: source-c
+    nautobot_device_name: device-c
+    commissioned: false
+sync_in_pve_nautobot_snapshot:
+  data:
+    devices:
+      - id: device-a-id
+        name: device-a
+        status:
+          name: Active
+        device_type:
+          model: curated-device-type
+        role:
+          name: curated-role
+        location:
+          name: curated-location
+        primary_ip4: null
+        interfaces: []
+        custom_field_data:
+          sync_source: proxmox
+          physical_ram_mb: 4096
+      - id: device-c-id
+        name: device-c
+        status:
+          name: Active
+        device_type:
+          model: curated-device-type
+        role:
+          name: curated-role
+        location:
+          name: curated-location
+        primary_ip4: null
+        interfaces: []
+        custom_field_data:
+          sync_source: proxmox
+          physical_ram_mb: 4096
+      - id: source-b-id
+        name: source-b
+        status:
+          name: Active
+        device_type:
+          model: curated-device-type
+        role:
+          name: curated-role
+        location:
+          name: curated-location
+        primary_ip4: null
+        interfaces: []
+        custom_field_data:
+          sync_source: proxmox
+          physical_ram_mb: 4096
+    inventory_items: []
+    virtual_machines: []
+    ip_addresses:
+      - id: reservation-a-id
+        address: 192.0.2.101/32
+        dns_name: reservation-a
+        interfaces: []
+        custom_field_data:
+          sync_source: curated
+      - id: reservation-b-id
+        address: 192.0.2.102/32
+        dns_name: source-b
+        interfaces: []
+        custom_field_data:
+          sync_source: curated
+      - id: reservation-c-id
+        address: 192.0.2.103/32
+        dns_name: device-c
+        interfaces: []
+        custom_field_data:
+          sync_source: curated
+    prefixes: []
+    clusters: []
+    statuses:
+      - id: status-active
+        name: Active
+    roles:
+      - id: role-node
+        name: pve-node
+    tags: []
+    cluster_types:
+      - id: cluster-type-proxmox
+        name: Proxmox
+    manufacturers:
+      - id: manufacturer-generic
+        name: Generic
+    device_types:
+      - id: device-type-node
+        model: pve-node
+        manufacturer:
+          name: Generic

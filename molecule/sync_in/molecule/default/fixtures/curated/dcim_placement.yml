@@ -1,0 +1,112 @@
+---
+sync_in_racks:
+  - name: Rack-A
+    site: site-a
+sync_in_devices:
+  - name: rack-change
+    chassis: Chassis-A
+    role: server
+    service_tag: SERIAL-A
+    rack: Rack-A
+    position: 10
+    face: front
+    height: 2
+  - name: no-placement
+    chassis: Chassis-B
+    role: server
+    service_tag: SERIAL-B
+  - name: choice-case
+    chassis: Chassis-C
+    role: server
+    service_tag: SERIAL-C
+    rack: Rack-B
+    position: 3
+    face: front
+    bmc_ip: 192.0.2.50
+sync_in_hardware_devices: []
+sync_in_hardware_modules: []
+sync_in_wan_circuits: []
+sync_in_vlans: []
+sync_in_prefixes: []
+sync_in_reservations: []
+sync_in_curated_snapshot:
+  data:
+    racks:
+      - id: rack-a
+        name: Rack-A
+        status: {name: Active}
+        location: {name: site-a}
+        custom_field_data: {sync_source: curated}
+      - id: rack-b
+        name: Rack-B
+        status: {name: Active}
+        location: {name: site-a}
+        custom_field_data: {sync_source: curated}
+    devices:
+      - id: device-a
+        name: rack-change
+        serial: SERIAL-A
+        asset_tag: null
+        status: {name: Active}
+        role: {name: server}
+        location: {name: site-a}
+        rack: {name: Rack-B}
+        position: 4
+        face: rear
+        device_type: {model: Chassis-A}
+        custom_field_data: {sync_source: curated}
+        interfaces: []
+      - id: device-b
+        name: no-placement
+        serial: SERIAL-B
+        asset_tag: null
+        status: {name: Active}
+        role: {name: server}
+        location: {name: site-a}
+        rack: {name: Rack-B}
+        position: 3
+        face: front
+        device_type: {model: Chassis-B}
+        custom_field_data: {sync_source: curated}
+        interfaces: []
+      # GraphQL returns choice fields as upper-case enum names.
+      - id: device-c
+        name: choice-case
+        serial: SERIAL-C
+        asset_tag: null
+        status: {name: Active}
+        role: {name: server}
+        location: {name: site-a}
+        rack: {name: Rack-B}
+        position: 3
+        face: FRONT
+        device_type: {model: Chassis-C}
+        custom_field_data: {sync_source: curated}
+        interfaces:
+          - id: bmc-c
+            name: BMC
+            type: OTHER
+            mgmt_only: true
+            mac_address: null
+            status: {name: Active}
+            custom_field_data: {sync_source: curated}
+    device_types:
+      - model: Chassis-A
+        u_height: 3
+        manufacturer: {name: Generic}
+        custom_field_data: {sync_source: curated}
+      - model: Chassis-B
+        u_height: 3
+        manufacturer: {name: Generic}
+        custom_field_data: {sync_source: curated}
+      - model: Chassis-C
+        u_height: 3
+        manufacturer: {name: Generic}
+        custom_field_data: {sync_source: curated}
+    locations:
+      - name: site-a
+        parent: null
+    manufacturers:
+      - name: Generic
+    roles:
+      - name: server

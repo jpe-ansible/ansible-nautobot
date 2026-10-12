@@ -1,0 +1,174 @@
+---
+- name: Report the Bootstrap plan
+  ansible.builtin.debug:
+    msg: >-
+      Bootstrap repository {{ sync_in_bootstrap_repo_name }}: {{ sync_in_bootstrap_repo_action }};
+      Bootstrap job enabled: {{ sync_in_bootstrap_job_enabled }}.
+
+- name: Create the Bootstrap Git Repository record
+  ansible.builtin.uri:
+    url: "{{ sync_in_nautobot_url | trim('/') }}/api/extras/git-repositories/"
+    method: POST
+    headers:
+      Authorization: "Token {{ sync_in_write_token }}"
+      Accept: application/json
+    body_format: json
+    body: "{{ sync_in_bootstrap_desired_repository }}"
+    status_code: 201
+    validate_certs: true
+    return_content: true
+  register: sync_in_bootstrap_create_response
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - sync_in_bootstrap_repo_action == 'create'
+
+- name: Update the Bootstrap Git Repository record
+  ansible.builtin.uri:
+    url: "{{ sync_in_nautobot_url | trim('/') }}/api/extras/git-repositories/{{ sync_in_bootstrap_repo_id }}/"
+    method: PATCH
+    headers:
+      Authorization: "Token {{ sync_in_write_token }}"
+      Accept: application/json
+    body_format: json
+    body: "{{ sync_in_bootstrap_desired_repository }}"
+    status_code: 200
+    validate_certs: true
+    return_content: true
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - sync_in_bootstrap_repo_action == 'update'
+
+- name: Select the Bootstrap Git Repository identifier
+  ansible.builtin.set_fact:
+    sync_in_bootstrap_repo_id: >-
+      {{ sync_in_bootstrap_create_response.json.id
+         if sync_in_bootstrap_repo_action == 'create'
+         else sync_in_bootstrap_repo_id }}
+  when: not ansible_check_mode
+
+- name: Enable the Bootstrap job when required
+  ansible.builtin.uri:
+    url: "{{ sync_in_nautobot_url | trim('/') }}/api/extras/jobs/{{ sync_in_bootstrap_job_id }}/"
+    method: PATCH
+    headers:
+      Authorization: "Token {{ sync_in_write_token }}"
+      Accept: application/json
+    body_format: json
+    body:
+      enabled: true
+    status_code: 200
+    validate_certs: true
+    return_content: true
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - not sync_in_bootstrap_job_enabled
+
+- name: Queue the Bootstrap repository sync
+  ansible.builtin.uri:
+    url: "{{ sync_in_nautobot_url | trim('/') }}/api/extras/git-repositories/{{ sync_in_bootstrap_repo_id }}/sync/"
+    method: POST
+    headers:
+      Authorization: "Token {{ sync_in_write_token }}"
+      Accept: application/json
+    status_code: 200
+    validate_certs: true
+    return_content: true
+  register: sync_in_bootstrap_sync_response
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Wait for the Bootstrap repository sync job
+  ansible.builtin.uri:
+    url: >-
+      {{ sync_in_nautobot_url | trim('/') ~ '/api/extras/job-results/' ~
+         sync_in_bootstrap_sync_response.json.job_result.id ~ '/' }}
+    method: GET
+    headers:
+      Authorization: "Token {{ sync_in_read_token }}"
+      Accept: application/json
+    status_code: 200
+    validate_certs: true
+    return_content: true
+  register: sync_in_bootstrap_sync_poll
+  no_log: true
+  changed_when: false
+  until: >-
+    (
+      sync_in_bootstrap_sync_poll.status | default(0) == 200 and
+      sync_in_bootstrap_sync_poll.json.status in ['SUCCESS', 'FAILURE', 'REVOKED']
+    ) or (
+      sync_in_bootstrap_sync_poll.status | default(0) >= 400 and
+      sync_in_bootstrap_sync_poll.status | default(0) < 500 and
+      sync_in_bootstrap_sync_poll.status | default(0) != 429
+    )
+  retries: "{{ ((sync_in_bootstrap_timeout | int) - 1) // 15 }}"
+  delay: 15
+  when: not ansible_check_mode
+
+- name: Save the Bootstrap repository sync result
+  ansible.builtin.set_fact:
+    sync_in_bootstrap_sync_result: "{{ sync_in_bootstrap_sync_poll.json }}"
+  when: not ansible_check_mode
+
+- name: Check the Bootstrap repository sync result
+  ansible.builtin.include_tasks: bootstrap_plan.yml
+  when: not ansible_check_mode
+
+- name: Queue the Bootstrap data load job
+  ansible.builtin.uri:
+    url: "{{ sync_in_nautobot_url | trim('/') }}/api/extras/jobs/{{ sync_in_bootstrap_job_id }}/run/"
+    method: POST
+    headers:
+      Authorization: "Token {{ sync_in_write_token }}"
+      Accept: application/json
+    body_format: json
+    body:
+      data:
+        load_source: git
+        dryrun: false
+    status_code: 201
+    validate_certs: true
+    return_content: true
+  register: sync_in_bootstrap_job_run_response
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Wait for the Bootstrap data load job
+  ansible.builtin.uri:
+    url: >-
+      {{ sync_in_nautobot_url | trim('/') ~ '/api/extras/job-results/' ~
+         sync_in_bootstrap_job_run_response.json.job_result.id ~ '/' }}
+    method: GET
+    headers:
+      Authorization: "Token {{ sync_in_read_token }}"
+      Accept: application/json
+    status_code: 200
+    validate_certs: true
+    return_content: true
+  register: sync_in_bootstrap_job_poll
+  no_log: true
+  changed_when: false
+  until: >-
+    (
+      sync_in_bootstrap_job_poll.status | default(0) == 200 and
+      sync_in_bootstrap_job_poll.json.status in ['SUCCESS', 'FAILURE', 'REVOKED']
+    ) or (
+      sync_in_bootstrap_job_poll.status | default(0) >= 400 and
+      sync_in_bootstrap_job_poll.status | default(0) < 500 and
+      sync_in_bootstrap_job_poll.status | default(0) != 429
+    )
+  retries: "{{ ((sync_in_bootstrap_timeout | int) - 1) // 15 }}"
+  delay: 15
+  when: not ansible_check_mode
+
+- name: Save the Bootstrap data load result
+  ansible.builtin.set_fact:
+    sync_in_bootstrap_final_job_result: "{{ sync_in_bootstrap_job_poll.json }}"
+  when: not ansible_check_mode
+
+- name: Check the Bootstrap data load result
+  ansible.builtin.include_tasks: bootstrap_plan.yml
+  when: not ansible_check_mode

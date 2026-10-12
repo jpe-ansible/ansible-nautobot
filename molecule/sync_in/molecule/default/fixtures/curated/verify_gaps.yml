@@ -1,0 +1,243 @@
+---
+- name: Load DCIM ownership fixture
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/curated/dcim_ownership.yml"
+    name: sync_in_curated_fixture
+
+- name: Set DCIM ownership inputs
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/set_inputs.yml"
+
+- name: Select DCIM ownership inputs
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+- name: Transform DCIM ownership fixture
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+- name: Assert Proxmox node Devices stay with their owner
+  ansible.builtin.assert:
+    that:
+      - sync_in_curated_devices | map(attribute='name') | list == ['server-a']
+    fail_msg: "curated DCIM included a Device with the Proxmox node role"
+    success_msg: "pve_node_dcim_exclusion: passed"
+
+- name: Reset the placement plan and load DCIM placement fixture
+  ansible.builtin.set_fact:
+    sync_in_plan: {}
+
+- name: Load DCIM placement fixture
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/curated/dcim_placement.yml"
+    name: sync_in_curated_fixture
+
+- name: Set DCIM placement inputs
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/set_inputs.yml"
+
+- name: Select DCIM placement inputs
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+- name: Transform DCIM placement fixture
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+- name: Build the DCIM placement comparison
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_plan.yml"
+
+- name: Assert supplied rack placement is normalized and compared
+  ansible.builtin.assert:
+    that:
+      - >-
+        (sync_in_curated_devices | selectattr('name', 'equalto', 'rack-change') | first)
+        .sync_in_curated_rack == 'Rack-A'
+      - >-
+        (sync_in_curated_devices | selectattr('name', 'equalto', 'rack-change') | first)
+        .sync_in_curated_position == 10
+      - >-
+        (sync_in_curated_devices | selectattr('name', 'equalto', 'rack-change') | first)
+        .sync_in_curated_face == 'front'
+      - >-
+        (sync_in_curated_devices | selectattr('name', 'equalto', 'rack-change') | first)
+        .sync_in_curated_type_u_height == 2
+      - >-
+        (sync_in_plan.dcim['update'] | selectattr('identifier', 'equalto', 'rack-change') | first)
+        .changed_fields.rack.new == 'Rack-A'
+      - >-
+        (sync_in_plan.dcim['update'] | selectattr('identifier', 'equalto', 'rack-change') | first)
+        .changed_fields.position.new == 10
+      - >-
+        (sync_in_plan.dcim['update'] | selectattr('identifier', 'equalto', 'rack-change') | first)
+        .changed_fields.face.new == 'front'
+      - >-
+        (sync_in_plan.dcim['update'] | selectattr('object_kind', 'equalto', 'device_type') | first)
+        .changed_fields.u_height.new == 2
+      - >-
+        sync_in_plan.dcim['update'] | selectattr('identifier', 'equalto', 'no-placement') | list | length == 0
+      - >-
+        sync_in_plan.dcim['update'] | selectattr('identifier', 'in', ['choice-case', 'choice-case:BMC'])
+        | list | length == 0
+    fail_msg: "rack placement was dropped or omitted source fields changed the existing Device"
+    success_msg: "dcim_rack_placement: passed"
+
+- name: Load hardware ownership fixture
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/curated/hardware_ownership.yml"
+    name: sync_in_curated_fixture
+
+- name: Set hardware ownership inputs
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/set_inputs.yml"
+
+- name: Select hardware ownership inputs
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+- name: Transform hardware ownership fixture
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+- name: Assert DCIM chassis do not become standalone hardware Devices
+  ansible.builtin.assert:
+    that:
+      - sync_in_curated_hardware_devices | map(attribute='hw_id') | list == ['standalone-a']
+    fail_msg: "a DCIM chassis was normalized as a second standalone Device"
+    success_msg: "dcim_hardware_chassis_ownership: passed"
+
+- name: Reset the circuit plan and load WAN circuit fixture
+  ansible.builtin.set_fact:
+    sync_in_plan: {}
+
+- name: Load WAN circuit fixture
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/curated/wan_circuit.yml"
+    name: sync_in_curated_fixture
+
+- name: Set WAN circuit inputs
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/set_inputs.yml"
+
+- name: Select WAN circuit inputs
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+- name: Transform WAN circuit fixture
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+- name: Build the WAN circuit comparison
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_plan.yml"
+
+- name: Assert circuit provider type and status changes are planned
+  ansible.builtin.assert:
+    that:
+      - >-
+        (sync_in_plan.hardware['update'] | selectattr('identifier', 'equalto', 'WAN-TEST') | first)
+        .changed_fields.provider.new == 'New Provider'
+      - >-
+        (sync_in_plan.hardware['update'] | selectattr('identifier', 'equalto', 'WAN-TEST') | first)
+        .changed_fields.circuit_type.new == 'Internet'
+      - >-
+        (sync_in_plan.hardware['update'] | selectattr('identifier', 'equalto', 'WAN-TEST') | first)
+        .changed_fields.status.new == 'Planned'
+    fail_msg: "a circuit relation or status change was missing from the curated plan"
+    success_msg: "wan_circuit_relations: passed"
+
+- name: Load missing circuit type fixture
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/curated/wan_circuit_missing_type.yml"
+    name: sync_in_curated_fixture
+
+- name: Set missing circuit type inputs
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/set_inputs.yml"
+
+- name: Assert a missing circuit type fails with its identity
+  block:
+    - name: Select the curated input rows
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+    - name: Transform missing circuit type fixture
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+    - name: Fail when an unprovisioned Circuit Type passes validation
+      ansible.builtin.fail:
+        msg: "curated transform accepted an unprovisioned Circuit Type"
+  rescue:
+    - name: Confirm the missing Circuit Type is named
+      ansible.builtin.assert:
+        that:
+          - "'WAN-MISSING-TYPE' in (ansible_failed_result | to_json)"
+          - "'Unprovisioned Type' in (ansible_failed_result | to_json)"
+          - "'missing Circuit Type' in (ansible_failed_result | to_json)"
+        fail_msg: >-
+          Expected the missing Circuit Type message, got:
+          {{ ansible_failed_result | to_json }}
+        success_msg: "missing_circuit_type_message: passed"
+
+- name: Reset the field plan and load field normalization fixture
+  ansible.builtin.set_fact:
+    sync_in_plan: {}
+
+- name: Load field normalization fixture
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/curated/fields.yml"
+    name: sync_in_curated_fixture
+
+- name: Set field normalization inputs
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/set_inputs.yml"
+
+- name: Select field normalization inputs
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+- name: Transform field normalization fixture
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+- name: Build the field normalization comparison
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_plan.yml"
+
+- name: Select blank procurement plan rows
+  ansible.builtin.set_fact:
+    sync_in_curated_blank_device_plan: >-
+      {{ sync_in_plan.hardware['update'] | selectattr('identifier', 'equalto', 'device-blank')
+         | list | first | default({}, true) }}
+    sync_in_curated_blank_module_plan: >-
+      {{ sync_in_plan.hardware['update'] | selectattr('identifier', 'equalto', 'module-blank')
+         | list | first | default({}, true) }}
+
+- name: Assert procurement blanks preserve values and serial placeholders are omitted
+  ansible.builtin.assert:
+    that:
+      - sync_in_curated_hardware_devices[0].sync_in_curated_serial == ''
+      - sync_in_curated_hardware_devices[0].sync_in_curated_custom_fields.purchase_date == '2024-10-01'
+      - sync_in_curated_hardware_devices[0].sync_in_curated_custom_fields.purchase_price_cents == 123456
+      - sync_in_curated_hardware_devices[0].sync_in_curated_custom_fields.purchase_price_cents is integer
+      - sync_in_curated_hardware_devices[0].sync_in_curated_custom_fields.preserve_me == 'existing'
+      - sync_in_curated_hardware_devices[0].sync_in_curated_custom_fields.sync_source == 'curated'
+      - sync_in_curated_hardware_devices[1].sync_in_curated_serial == ''
+      - sync_in_curated_hardware_devices[1].sync_in_curated_custom_fields.purchase_date == '2021-04-12'
+      - sync_in_curated_hardware_devices[1].sync_in_curated_custom_fields.purchase_price_cents == 765432
+      - sync_in_curated_module_units[0].sync_in_curated_serial == ''
+      - sync_in_curated_module_units[0].sync_in_curated_custom_fields.purchase_date == '2020-03-02'
+      - sync_in_curated_module_units[0].sync_in_curated_custom_fields.purchase_price_cents == 456789
+      - "'serial' not in sync_in_curated_blank_device_plan.changed_fields | default({})"
+      - "'serial' not in sync_in_curated_blank_module_plan.changed_fields | default({})"
+      - sync_in_curated_circuits[0].description | length == 200
+      - sync_in_curated_missing_manufacturers == ['Example']
+      - sync_in_curated_missing_roles == ['hardware']
+    fail_msg: "serial omission, procurement merge, or circuit description normalization failed"
+    success_msg: "serial_date_price_and_circuit_fields: passed"
+
+- name: Load row-owned quantity fixture
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/curated/quantity_1.yml"
+    name: sync_in_curated_fixture
+
+- name: Set row-owned quantity inputs
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/set_inputs.yml"
+
+- name: Select row-owned quantity inputs
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+- name: Transform row-owned quantity fixture
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+- name: Assert quantity reconciliation touches only row-owned tags
+  ansible.builtin.assert:
+    that:
+      - >-
+        sync_in_curated_module_rows[0].sync_in_curated_existing_modules
+        | map(attribute='asset_tag') | list | sort
+        == ['RAM-DROP#1', 'RAM-DROP#2', 'RAM-DROP#3']
+      - sync_in_curated_modules_to_delete | map(attribute='asset_tag') | list | sort == ['RAM-DROP#2', 'RAM-DROP#3']
+    fail_msg: "quantity reconciliation selected an asset tag owned by another source"
+    success_msg: "row_owned_quantity_tags: passed"

@@ -1,0 +1,402 @@
+---
+- name: Create missing manufacturers
+  networktocode.nautobot.manufacturer:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    name: "{{ item }}"
+    state: present
+  loop: "{{ sync_in_curated_missing_manufacturers }}"
+  loop_control:
+    label: manufacturer
+  no_log: true
+
+- name: Create missing Device roles
+  networktocode.nautobot.role:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    name: "{{ item }}"
+    content_types: "{{ sync_in_curated_device_role_content_types }}"
+    state: present
+  loop: "{{ sync_in_curated_missing_roles }}"
+  loop_control:
+    label: role
+  no_log: true
+
+- name: Apply curated child Locations
+  networktocode.nautobot.location:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    name: "{{ item.name }}"
+    parent_location: "{{ item.parent_location }}"
+    location_type: "{{ item.location_type }}"
+    status: "{{ item.status }}"
+    custom_fields: "{{ item.custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_locations }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Apply curated rack-server Device Types
+  networktocode.nautobot.device_type:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    model: "{{ item.sync_in_curated_type_model }}"
+    manufacturer: "{{ item.sync_in_curated_type_manufacturer }}"
+    u_height: "{{ item.sync_in_curated_type_u_height if item.sync_in_curated_type_u_height is defined else omit }}"
+    custom_fields: "{{ item.sync_in_curated_type_custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_devices }}"
+  loop_control:
+    label: "{{ item.sync_in_curated_type_model }}"
+  no_log: true
+
+- name: Apply curated hardware Device Types
+  networktocode.nautobot.device_type:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    model: "{{ item.sync_in_curated_type_model }}"
+    manufacturer: "{{ item.sync_in_curated_type_manufacturer }}"
+    custom_fields: "{{ item.sync_in_curated_type_custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_hardware_devices }}"
+  loop_control:
+    label: "{{ item.sync_in_curated_type_model }}"
+  no_log: true
+
+- name: Apply curated Module Types
+  networktocode.nautobot.module_type:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    model: "{{ item.sync_in_curated_module_type_model }}"
+    manufacturer: "{{ item.sync_in_curated_module_type_manufacturer }}"
+    part_number: "{{ item.sync_in_curated_module_type_part_number }}"
+    custom_fields: "{{ item.sync_in_curated_module_type_custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_module_rows }}"
+  loop_control:
+    label: "{{ item.sync_in_curated_module_type_model }}"
+  when: not item.sync_in_curated_drive_suppressed
+  no_log: true
+
+- name: Apply curated Racks
+  networktocode.nautobot.rack:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    name: "{{ item.name }}"
+    location:
+      name: "{{ item.sync_in_curated_site }}"
+    status: "{{ item.sync_in_curated_status }}"
+    custom_fields: "{{ item.sync_in_curated_custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_racks }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Apply curated rack-server Devices
+  networktocode.nautobot.device:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    name: "{{ item.name }}"
+    device_type: "{{ item.sync_in_curated_type_model }}"
+    role: "{{ item.sync_in_curated_role }}"
+    location: "{{ item.sync_in_curated_location }}"
+    rack: "{{ item.sync_in_curated_rack if item.sync_in_curated_rack is defined else omit }}"
+    position: "{{ item.sync_in_curated_position if item.sync_in_curated_position is defined else omit }}"
+    face: "{{ item.sync_in_curated_face if item.sync_in_curated_face is defined else omit }}"
+    status: "{{ item.sync_in_curated_status }}"
+    serial: "{{ item.sync_in_curated_serial if item.sync_in_curated_serial | length > 0 else omit }}"
+    custom_fields: "{{ item.sync_in_curated_custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_devices }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Apply curated standalone hardware Devices
+  networktocode.nautobot.device:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    name: "{{ item.hw_id }}"
+    device_type: "{{ item.sync_in_curated_type_model }}"
+    role: "{{ item.sync_in_curated_role }}"
+    location:
+      name: "{{ item.location }}"
+      parent: "{{ sync_in_curated_root_location }}"
+    status: "{{ item.sync_in_curated_status }}"
+    asset_tag: "{{ item.hw_id }}"
+    serial: "{{ item.sync_in_curated_serial if item.sync_in_curated_serial | length > 0 else omit }}"
+    custom_fields: "{{ item.sync_in_curated_custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_hardware_devices }}"
+  loop_control:
+    label: "{{ item.hw_id }}"
+  no_log: true
+
+- name: Apply curated rack-server BMC interfaces
+  networktocode.nautobot.device_interface:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    device: "{{ item.name }}"
+    name: "{{ sync_in_curated_bmc_interface_name }}"
+    type: "{{ sync_in_curated_bmc_interface_type }}"
+    mgmt_only: true
+    status: "{{ sync_in_curated_status_name }}"
+    custom_fields: "{{ item.sync_in_curated_bmc_custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_devices }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.sync_in_curated_has_bmc
+  no_log: true
+
+- name: Apply curated ModuleBays
+  networktocode.nautobot.module_bay:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    id: "{{ item.id if item.id | length > 0 else omit }}"
+    parent_device: "{{ item.parent_device }}"
+    name: "{{ item.name }}"
+    position: "{{ item.position }}"
+    custom_fields: "{{ item.custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_module_bays }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+# A Module that already exists is addressed by id. The collection answers every
+# nested lookup (location, bay) with that same id when one is given, so the
+# lookups are resolved here and passed as ids instead of name dictionaries.
+- name: Read the applied Locations, ModuleBays, ModuleTypes and Statuses
+  networktocode.nautobot.graphql_info:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_read_token }}"
+    validate_certs: true
+    query: >-
+      query { locations { id name parent { name } }
+      module_bays { id name parent_device { name } }
+      module_types { id model } statuses { id name } }
+  register: sync_in_curated_applied
+  changed_when: false
+  no_log: true
+
+- name: Index the applied ids
+  ansible.builtin.set_fact:
+    sync_in_curated_location_ids: >-
+      {%- set ids = namespace(by_key={}) -%}
+      {%- for row in sync_in_curated_applied.data.locations | default([], true) -%}
+      {%- set _ = ids.by_key.update({((row.parent.name if row.parent else '') ~ '|' ~ row.name): row.id}) -%}
+      {%- endfor -%}
+      {{ ids.by_key }}
+    sync_in_curated_bay_ids: >-
+      {%- set ids = namespace(by_key={}) -%}
+      {%- for row in sync_in_curated_applied.data.module_bays | default([], true) -%}
+      {%- set device = row.parent_device.name if row.parent_device else '' -%}
+      {%- set _ = ids.by_key.update({(device ~ '|' ~ row.name): row.id}) -%}
+      {%- endfor -%}
+      {{ ids.by_key }}
+    sync_in_curated_module_type_ids: >-
+      {{ dict((sync_in_curated_applied.data.module_types | default([], true) | map(attribute='model') | list)
+              | zip(sync_in_curated_applied.data.module_types | default([], true) | map(attribute='id') | list)) }}
+    sync_in_curated_status_ids: >-
+      {{ dict((sync_in_curated_applied.data.statuses | default([], true) | map(attribute='name') | list)
+              | zip(sync_in_curated_applied.data.statuses | default([], true) | map(attribute='id') | list)) }}
+
+- name: Apply curated installed Modules
+  networktocode.nautobot.module:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    id: >-
+      {{ item.sync_in_curated_existing_module_id
+         if item.sync_in_curated_existing_module_id | length > 0 else omit }}
+    asset_tag: "{{ item.asset_tag }}"
+    module_type: "{{ item.sync_in_curated_module_type_model }}"
+    parent_module_bay: >-
+      {{ sync_in_curated_bay_ids[item.sync_in_curated_parent_device ~ '|' ~ item.asset_tag]
+         | default({'name': item.asset_tag, 'parent_device': item.sync_in_curated_parent_device}) }}
+    status: "{{ item.sync_in_curated_status }}"
+    serial: "{{ item.sync_in_curated_serial if item.sync_in_curated_serial | length > 0 else omit }}"
+    custom_fields: "{{ item.sync_in_curated_custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_module_units }}"
+  loop_control:
+    label: "{{ item.asset_tag }}"
+  when: item.sync_in_curated_parent_device | length > 0
+  no_log: true
+
+# The module task finds an existing Module only by type and location, so a
+# second unit of one type in one location would overwrite the first. New units
+# are therefore created through the API and existing units are updated by id.
+- name: Create curated spare Modules that are not in Nautobot yet
+  ansible.builtin.uri:
+    url: "{{ sync_in_curated_module_api_url }}"
+    method: POST
+    headers:
+      Authorization: "Token {{ sync_in_write_token }}"
+    body_format: json
+    body: >-
+      {{ {'asset_tag': item.asset_tag,
+          'module_type': sync_in_curated_module_type_ids[item.sync_in_curated_module_type_model],
+          'location': sync_in_curated_location_ids[sync_in_curated_root_location ~ '|' ~ item.sync_in_curated_location],
+          'status': sync_in_curated_status_ids[item.sync_in_curated_status],
+          'custom_fields': item.sync_in_curated_custom_fields}
+         | combine({'serial': item.sync_in_curated_serial} if item.sync_in_curated_serial | length > 0 else {}) }}
+    status_code: 201
+    validate_certs: true
+  loop: >-
+    {{ sync_in_curated_module_units
+       | selectattr('sync_in_curated_parent_device', 'equalto', '')
+       | selectattr('sync_in_curated_existing_module_id', 'equalto', '') | list }}
+  loop_control:
+    label: "{{ item.asset_tag }}"
+  when: not ansible_check_mode
+  changed_when: true
+  no_log: true
+
+- name: Report the spare Modules that a check run would create
+  ansible.builtin.debug:
+    msg: "Check mode creates no Module; {{ item.asset_tag }} is not in Nautobot yet."
+  loop: >-
+    {{ sync_in_curated_module_units
+       | selectattr('sync_in_curated_parent_device', 'equalto', '')
+       | selectattr('sync_in_curated_existing_module_id', 'equalto', '') | list }}
+  loop_control:
+    label: "{{ item.asset_tag }}"
+  when: ansible_check_mode
+
+- name: Update curated spare Modules that already exist
+  networktocode.nautobot.module:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    id: "{{ item.sync_in_curated_existing_module_id }}"
+    asset_tag: "{{ item.asset_tag }}"
+    module_type: "{{ item.sync_in_curated_module_type_model }}"
+    location: "{{ sync_in_curated_location_ids[sync_in_curated_root_location ~ '|' ~ item.sync_in_curated_location] }}"
+    status: "{{ item.sync_in_curated_status }}"
+    serial: "{{ item.sync_in_curated_serial if item.sync_in_curated_serial | length > 0 else omit }}"
+    custom_fields: "{{ item.sync_in_curated_custom_fields }}"
+    state: present
+  loop: >-
+    {{ sync_in_curated_module_units
+       | selectattr('sync_in_curated_parent_device', 'equalto', '')
+       | rejectattr('sync_in_curated_existing_module_id', 'equalto', '') | list }}
+  loop_control:
+    label: "{{ item.asset_tag }}"
+  no_log: true
+
+- name: Delete only surplus row-owned Modules
+  networktocode.nautobot.module:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    id: "{{ item.id }}"
+    state: absent
+  loop: "{{ sync_in_curated_modules_to_delete }}"
+  loop_control:
+    label: "{{ item.asset_tag }}"
+  no_log: true
+
+- name: Delete empty row-owned ModuleBays for surplus Modules
+  networktocode.nautobot.module_bay:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    id: "{{ item.id }}"
+    state: absent
+  loop: "{{ sync_in_curated_module_bays_to_delete }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Apply curated WAN Providers
+  networktocode.nautobot.provider:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    name: "{{ item.name }}"
+    custom_fields: "{{ item.custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_providers }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Apply curated WAN circuits
+  networktocode.nautobot.circuit:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    cid: "{{ item.circuit_id }}"
+    circuit_provider: "{{ item.provider }}"
+    circuit_type: "{{ item.circuit_type }}"
+    status: "{{ item.status }}"
+    description: "{{ item.description }}"
+    custom_fields: "{{ item.custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_circuits }}"
+  loop_control:
+    label: "{{ item.circuit_id }}"
+  no_log: true
+
+- name: Apply curated VLANs
+  networktocode.nautobot.vlan:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    vid: "{{ item.vid }}"
+    name: "{{ item.name }}"
+    status: "{{ item.status }}"
+    custom_fields: "{{ item.custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_vlans }}"
+  loop_control:
+    label: "{{ item.vid }}"
+  no_log: true
+
+- name: Apply curated Prefixes
+  networktocode.nautobot.prefix:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    prefix: "{{ item.prefix }}"
+    status: "{{ item.status }}"
+    type: "{{ item.type }}"
+    vlan: "{{ item.vlan_vid }}"
+    role: "{{ item.role }}"
+    custom_fields: "{{ item.custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_prefixes }}"
+  loop_control:
+    label: "{{ item.prefix }}"
+  no_log: true
+
+- name: Apply curated IP reservations
+  networktocode.nautobot.ip_address:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    validate_certs: true
+    address: "{{ item.sync_in_curated_address }}"
+    dns_name: "{{ item.dns_name }}"
+    status: "{{ item.sync_in_curated_status }}"
+    type: Host
+    custom_fields: "{{ item.sync_in_curated_custom_fields }}"
+    state: present
+  loop: "{{ sync_in_curated_reservations }}"
+  loop_control:
+    label: "{{ item.dns_name }}"
+  no_log: true

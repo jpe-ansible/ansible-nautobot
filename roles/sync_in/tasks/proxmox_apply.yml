@@ -1,0 +1,286 @@
+---
+- name: Ensure the shared Active status exists
+  networktocode.nautobot.status:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    name: "{{ item.name }}"
+    content_types: "{{ item.content_types }}"
+    state: present
+  loop: "{{ sync_in_pve_reference_creates.statuses }}"
+  loop_control:
+    label: status
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Ensure shared manufacturers exist
+  networktocode.nautobot.manufacturer:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    name: "{{ item.name }}"
+    state: present
+  loop: "{{ sync_in_pve_reference_creates.manufacturers }}"
+  loop_control:
+    label: manufacturer
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Ensure the Proxmox node device type exists
+  networktocode.nautobot.device_type:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    model: "{{ item.model }}"
+    manufacturer: "{{ item.manufacturer }}"
+    state: present
+  loop: "{{ sync_in_pve_reference_creates.device_types }}"
+  loop_control:
+    label: device type
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Ensure shared roles exist
+  networktocode.nautobot.role:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    name: "{{ item.name }}"
+    content_types: "{{ item.content_types }}"
+    state: present
+  loop: "{{ sync_in_pve_reference_creates.roles }}"
+  loop_control:
+    label: role
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Ensure the shared Proxmox cluster type exists
+  networktocode.nautobot.cluster_type:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    name: "{{ item.name }}"
+    state: present
+  loop: "{{ sync_in_pve_reference_creates.cluster_types }}"
+  loop_control:
+    label: cluster type
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Ensure guest tags exist
+  networktocode.nautobot.tag:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    name: "{{ item.name }}"
+    content_types: "{{ item.content_types }}"
+    state: present
+  loop: "{{ sync_in_pve_reference_creates.tags }}"
+  loop_control:
+    label: tag
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Synchronize Proxmox clusters
+  networktocode.nautobot.cluster:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    name: "{{ item.name }}"
+    cluster_type: "{{ sync_in_pve_cluster_type_name }}"
+    custom_fields: "{{ item.custom_fields }}"
+    state: present
+  loop: "{{ sync_in_pve_cluster_records }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Move owned Proxmox virtual machines to their live clusters
+  ansible.builtin.uri:
+    url: >-
+      {{ sync_in_nautobot_url | regex_replace(sync_in_pve_trailing_slash_regex, '')
+         }}/api/virtualization/virtual-machines/{{ item.id }}/
+    method: PATCH
+    headers:
+      Authorization: "Token {{ sync_in_write_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      cluster:
+        name: "{{ item.cluster }}"
+    status_code: 200
+    return_content: true
+    validate_certs: true
+  loop: "{{ sync_in_pve_vm_cluster_moves }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Create commissioned Proxmox node devices
+  networktocode.nautobot.device:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    name: "{{ item.name }}"
+    device_type: "{{ sync_in_pve_device_type_model }}"
+    location: "{{ sync_in_pve_location_name }}"
+    role: "{{ sync_in_pve_node_role_name }}"
+    status: "{{ sync_in_pve_status_name }}"
+    custom_fields: "{{ item.custom_fields }}"
+    state: present
+  loop: "{{ sync_in_pve_node_device_creates }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Update commissioned Proxmox node fields
+  networktocode.nautobot.device:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    name: "{{ item.name }}"
+    status: "{{ sync_in_pve_status_name }}"
+    custom_fields: "{{ item.custom_fields }}"
+    state: present
+  loop: "{{ sync_in_pve_node_device_updates }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Ensure commissioned Proxmox node management interfaces and address associations
+  networktocode.nautobot.device_interface:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    device: "{{ item.name }}"
+    name: mgmt
+    type: "{{ 'other' if not item.interface_exists else omit }}"
+    mgmt_only: "{{ true if not item.interface_exists else omit }}"
+    status: "{{ sync_in_pve_status_name if not item.interface_exists else omit }}"
+    ip_addresses:
+      state: merge
+      objects: "{{ [{'ip_address': item.address}] if item.address else [] }}"
+    state: present
+  loop: "{{ sync_in_pve_node_binding_records }}"
+  loop_control:
+    label: "{{ item.name }}/mgmt"
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Set commissioned Proxmox node primary IPv4 addresses
+  networktocode.nautobot.device:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    name: "{{ item.name }}"
+    primary_ip4: "{{ item.address }}"
+    state: present
+  loop: "{{ sync_in_pve_node_binding_records }}"
+  loop_control:
+    label: "{{ item.name }} primary IPv4"
+  when:
+    - item.address | length > 0
+    - item.current_primary_ip4 != item.address
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Synchronize guest IP addresses
+  networktocode.nautobot.ip_address:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    address: "{{ item.address }}"
+    namespace: "{{ sync_in_pve_namespace_name }}"
+    status: "{{ sync_in_pve_status_name }}"
+    custom_fields: "{{ item.custom_fields }}"
+    state: present
+  loop: "{{ sync_in_pve_ip_records }}"
+  loop_control:
+    label: address
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Synchronize Proxmox virtual machines
+  networktocode.nautobot.virtual_machine:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    name: "{{ item.name }}"
+    cluster: "{{ item.cluster }}"
+    role: "{{ item.role }}"
+    status: "{{ item.status }}"
+    vcpus: "{{ item.vcpus if item.vcpus > 0 else omit }}"
+    memory: "{{ item.memory if item.memory > 0 else omit }}"
+    disk: "{{ item.disk if item.disk > 0 else omit }}"
+    tags: "{{ item.tags }}"
+    custom_fields: "{{ item.custom_fields }}"
+    state: present
+  loop: "{{ sync_in_pve_guest_records }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: sync_in_pve_vm_sync_results
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Synchronize Proxmox virtual machine interfaces
+  networktocode.nautobot.vm_interface:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    virtual_machine: "{{ item.virtual_machine }}"
+    name: "{{ item.name }}"
+    mac_address: "{{ item.mac_address | default(omit, true) }}"
+    enabled: "{{ item.enabled }}"
+    status: "{{ sync_in_pve_status_name }}"
+    custom_fields: "{{ item.custom_fields | default(omit) }}"
+    ip_addresses:
+      state: "{{ item.ip_addresses_state }}"
+      objects: "{{ item.ip_addresses }}"
+    state: present
+  loop: "{{ sync_in_pve_interface_records }}"
+  loop_control:
+    label: "{{ item.virtual_machine }}:{{ item.name }}"
+  register: sync_in_pve_vm_interface_sync_results
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Set primary IPv4 addresses after synchronizing interfaces
+  networktocode.nautobot.virtual_machine:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    name: "{{ item.name }}"
+    cluster: "{{ item.cluster }}"
+    primary_ip4: "{{ item.primary_ip4 }}"
+    state: present
+  loop: "{{ sync_in_pve_guest_records }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.primary_ip4 | default('', true) | length > 0
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Synchronize discovered physical drives
+  networktocode.nautobot.inventory_item:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_write_token }}"
+    device: "{{ item.device }}"
+    name: "{{ item.name }}"
+    manufacturer: "{{ item.manufacturer }}"
+    part_id: "{{ item.part_id }}"
+    serial: "{{ item.serial }}"
+    description: "{{ item.description }}"
+    discovered: "{{ item.discovered }}"
+    custom_fields: "{{ item.custom_fields }}"
+    state: present
+  loop: "{{ sync_in_pve_drive_records }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  run_once: true
+  no_log: true

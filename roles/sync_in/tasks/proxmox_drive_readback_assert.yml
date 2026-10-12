@@ -1,0 +1,32 @@
+---
+- name: Reject an incomplete persisted drive readback
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_drive_readback.data.inventory_items is defined
+    fail_msg: "Nautobot read incomplete: <drive readback>"
+    quiet: true
+
+- name: Compare persisted and desired Proxmox drive counts per node
+  ansible.builtin.set_fact:
+    sync_in_pve_drive_readback_mismatches: >-
+      {%- set items = sync_in_pve_drive_readback.data.inventory_items -%}
+      {%- set ns = namespace(records=[]) -%}
+      {%- for row in sync_in_pve_drive_expected_counts | dict2items -%}
+      {%- set actual = items
+          | selectattr('device.name', 'equalto', row.key)
+          | selectattr('custom_field_data.sync_source', 'equalto', sync_in_pve_source_marker)
+          | list | length -%}
+      {%- if actual != row.value | int -%}
+      {%- set ns.records = ns.records + [{
+        'node': row.key, 'expected': row.value | int, 'actual': actual
+      }] -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ ns.records | to_json | from_json }}
+
+- name: Reject mismatched persisted Proxmox drive counts
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_drive_readback_mismatches | length == 0
+    fail_msg: "Proxmox drive readback count mismatch: {{ sync_in_pve_drive_readback_mismatches | to_json }}"
+    quiet: true

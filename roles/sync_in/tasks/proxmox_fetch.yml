@@ -1,0 +1,90 @@
+---
+- name: Read the Proxmox node list
+  community.proxmox.proxmox_node_info:
+    api_host: "{{ sync_in_pve_api_host }}"
+    api_port: "{{ sync_in_pve_api_port }}"
+    api_user: "{{ sync_in_pve_api_user }}"
+    api_token_id: "{{ sync_in_pve_api_token_name }}"
+    api_token_secret: "{{ sync_in_pve_token_secret }}"
+    api_timeout: "{{ sync_in_pve_api_timeout }}"
+    ca_path: "{{ sync_in_pve_ca_path }}"
+    validate_certs: true
+  register: sync_in_pve_node_info
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+  check_mode: false
+  when: sync_in_pve_components | length > 0
+
+- name: Read the Proxmox guests and their current configuration
+  community.proxmox.proxmox_vm_info:
+    api_host: "{{ sync_in_pve_api_host }}"
+    api_port: "{{ sync_in_pve_api_port }}"
+    api_user: "{{ sync_in_pve_api_user }}"
+    api_token_id: "{{ sync_in_pve_api_token_name }}"
+    api_token_secret: "{{ sync_in_pve_token_secret }}"
+    api_timeout: "{{ sync_in_pve_api_timeout }}"
+    ca_path: "{{ sync_in_pve_ca_path }}"
+    validate_certs: true
+    type: all
+    config: current
+  register: sync_in_pve_vm_info
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+  check_mode: false
+  when: "'virtualization' in sync_in_pve_components"
+
+- name: Read each node's live disk list
+  ansible.builtin.uri:
+    url: "{{ sync_in_pve_api_base_url }}/api2/json/nodes/{{ item.node }}/disks/list"
+    method: GET
+    headers:
+      Authorization: >-
+        PVEAPIToken={{ sync_in_pve_token_id }}={{ sync_in_pve_token_secret }}
+    return_content: true
+    status_code: 200
+    timeout: "{{ sync_in_pve_api_timeout }}"
+    validate_certs: true
+    ca_path: "{{ sync_in_pve_ca_path }}"
+  loop: "{{ sync_in_pve_node_info.proxmox_nodes | default([]) }}"
+  loop_control:
+    label: "{{ item.node }}"
+  register: sync_in_pve_disk_results
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+  check_mode: false
+  when: "'drives' in sync_in_pve_components"
+
+- name: Read the existing Nautobot objects owned by this flow
+  networktocode.nautobot.graphql_info:
+    url: "{{ sync_in_nautobot_url }}"
+    token: "{{ sync_in_read_token }}"
+    query: "{{ sync_in_pve_nautobot_snapshot_query }}"
+    validate_certs: true
+  register: sync_in_pve_nautobot_snapshot
+  changed_when: false
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+  check_mode: false
+  when: sync_in_pve_components | length > 0
+
+- name: Set the unused Proxmox guest result to an empty value
+  ansible.builtin.set_fact:
+    sync_in_pve_vm_info:
+      proxmox_vms: []
+  when: "'virtualization' not in sync_in_pve_components"
+
+- name: Set the unused Proxmox disk result to an empty value
+  ansible.builtin.set_fact:
+    sync_in_pve_disk_results:
+      results: []
+  when: "'drives' not in sync_in_pve_components"

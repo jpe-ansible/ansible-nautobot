@@ -1,0 +1,29 @@
+---
+sync_in_prune_max_fraction: 0.25
+sync_in_prune_min_allowance: 0
+sync_in_pve_nautobot_snapshot:
+  data:
+    devices: []
+    inventory_items:
+      - id: drive-only
+        name: Drive removed
+        device:
+          name: node-removed
+        custom_field_data:
+          sync_source: proxmox
+    virtual_machines: []
+    ip_addresses:
+      - id: node-reservation
+        address: 192.0.2.99/32
+        dns_name: node-a
+        interfaces: []
+        custom_field_data:
+          sync_source: curated
+    prefixes: []
+    clusters: []
+    statuses: []
+    roles: []
+    tags: []
+    cluster_types: []
+    manufacturers: []
+    device_types: []

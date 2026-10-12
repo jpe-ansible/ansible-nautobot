@@ -1,0 +1,34 @@
+---
+- name: Verify stage selection
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Reject an unknown stage with the stable message
+      block:
+        - name: Include the role with an unknown stage
+          ansible.builtin.include_role:
+            name: sync_in
+          vars:
+            sync_in_stages: [unknown]
+        - name: Fail when an unknown stage is accepted
+          ansible.builtin.fail:
+            msg: The role accepted an unknown stage.
+      rescue:
+        - name: Confirm the unknown-stage message
+          ansible.builtin.assert:
+            that:
+              - >-
+                ansible_failed_result.msg ==
+                'sync_in_stages holds an unknown stage; known stages: bootstrap, proxmox, curated'
+
+- name: Verify Bootstrap stage planning
+  ansible.builtin.import_playbook: verify_bootstrap.yml
+
+- name: Verify Proxmox stage transforms
+  ansible.builtin.import_playbook: verify_proxmox.yml
+
+- name: Verify curated stage transforms
+  ansible.builtin.import_playbook: verify_curated.yml
+
+- name: Verify family selectors and plan-only inputs
+  ansible.builtin.import_playbook: verify_selectors.yml

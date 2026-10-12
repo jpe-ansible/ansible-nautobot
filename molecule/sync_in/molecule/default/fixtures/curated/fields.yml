@@ -1,0 +1,104 @@
+---
+sync_in_racks:
+  - name: rack-a
+    site: site-a
+sync_in_devices: []
+sync_in_hardware_devices:
+  - hw_id: device-curated
+    category: Server
+    manufacturer: Example
+    model: Example Server
+    status: Active
+    location: rack-area
+    serial: System Serial Number
+    purchased: Oct 2024
+    price: "$1,234.56"
+    vendor: Example Vendor
+    receipt_ref: receipt-1
+    installed_in: null
+  - hw_id: device-blank
+    category: Server
+    manufacturer: Example
+    model: Example Server
+    status: Active
+    location: rack-area
+    serial: Default string
+    purchased: ""
+    price: ""
+    installed_in: null
+sync_in_hardware_modules:
+  - hw_id: module-blank
+    quantity: 1
+    category: memory
+    manufacturer: Example
+    model: Example Module
+    status: Active
+    location: rack-area
+    serial: '-'
+    purchased: ""
+    price: ""
+    installed_in: null
+sync_in_wan_circuits:
+  - circuit_id: circuit-curated
+    provider: Example Provider
+    circuit_type: Example Type
+    priority: 1
+    status: Active
+    description: >-
+      This description is intentionally longer than two hundred characters so
+      the transform must trim it to the API limit while retaining a deterministic
+      prefix for repeatable synchronization across subsequent runs and reviews.
+      Additional words ensure the fixture remains longer than the requested limit.
+sync_in_vlans: []
+sync_in_prefixes: []
+sync_in_reservations: []
+sync_in_curated_snapshot:
+  data:
+    devices:
+      - name: device-curated
+        custom_field_data: {preserve_me: existing}
+      - name: device-blank
+        serial: EXISTING-SERIAL
+        asset_tag: device-blank
+        status: {name: Active}
+        role: {name: hardware}
+        location: {name: rack-area}
+        device_type: {model: Example Server}
+        custom_field_data:
+          sync_source: curated
+          purchase_date: '2021-04-12'
+          purchase_price_cents: 765432
+    device_types:
+      - model: Example Server
+        manufacturer: {name: Example}
+        custom_field_data: {sync_source: curated}
+    locations:
+      - name: site-a
+        parent: null
+      - name: rack-area
+        parent: {name: site-a}
+        location_type: {name: Site}
+        status: {name: Active}
+        custom_field_data: {sync_source: curated}
+    modules:
+      - id: module-blank
+        asset_tag: module-blank
+        serial: EXISTING-MODULE-SERIAL
+        status: {name: Active}
+        module_type: {model: Example Module}
+        location: {name: rack-area}
+        parent_module_bay: null
+        custom_field_data:
+          sync_source: curated
+          purchase_date: '2020-03-02'
+          purchase_price_cents: 456789
+    module_types:
+      - model: Example Module
+        manufacturer: {name: Example}
+        part_number: ''
+        custom_field_data: {sync_source: curated}
+    module_bays: []
+    circuits: []
+    providers: []
+    circuit_types:
+      - name: Example Type

@@ -1,0 +1,22 @@
+---
+sync_in_racks: []
+sync_in_devices: []
+sync_in_hardware_devices: []
+sync_in_hardware_modules: []
+sync_in_wan_circuits:
+  - circuit_id: WAN-MISSING-TYPE
+    provider: Example Provider
+    circuit_type: Unprovisioned Type
+    priority: 1
+    status: Active
+    description: Missing circuit type test
+sync_in_vlans: []
+sync_in_prefixes: []
+sync_in_reservations: []
+sync_in_curated_snapshot:
+  data:
+    providers: []
+    circuit_types:
+      - id: type-internet
+        name: Internet
+    circuits: []
