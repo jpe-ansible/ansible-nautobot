@@ -5,9 +5,9 @@ on:
   workflow_call:
     inputs:
       scenarios:
-        description: JSON array of the changed role scenarios
+        description: JSON array of the scenarios to run
         type: string
-        default: '["server", "sync_in", "sync_out", "preflight", "drift", "url_guard", "live"]'
+        required: true
 
 permissions:
   contents: read
