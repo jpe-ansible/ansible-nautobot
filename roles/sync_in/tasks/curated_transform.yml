@@ -1,0 +1,597 @@
+---
+- name: Initialize curated transform results
+  ansible.builtin.set_fact:
+    sync_in_curated_rack_sites: []
+    sync_in_curated_root_locations: []
+    sync_in_curated_root_location: ""
+    sync_in_curated_known_device_names: []
+    sync_in_curated_procurement_rows: []
+    sync_in_curated_racks: []
+    sync_in_curated_devices: []
+    sync_in_curated_hardware_devices: []
+    sync_in_curated_module_rows: []
+    sync_in_curated_module_units: []
+    sync_in_curated_module_bays: []
+    sync_in_curated_modules_to_delete: []
+    sync_in_curated_module_bays_to_delete: []
+    sync_in_curated_locations: []
+    sync_in_curated_circuits: []
+    sync_in_curated_providers: []
+    sync_in_curated_vlans: []
+    sync_in_curated_prefixes: []
+    sync_in_curated_reservations: []
+    sync_in_curated_missing_manufacturers: []
+    sync_in_curated_missing_roles: []
+
+- name: Validate curated hardware module identifiers
+  ansible.builtin.assert:
+    that:
+      - >-
+        sync_in_curated_input_hardware_modules | map(attribute='hw_id', default='') | map('string')
+        | map('trim') | reject('truthy') | list | length == 0
+    fail_msg: "sync_in curated hardware_modules rows must include a non-empty hw_id."
+    quiet: true
+
+- name: Validate curated hardware device identifiers
+  ansible.builtin.assert:
+    that:
+      - >-
+        sync_in_curated_input_hardware_devices | map(attribute='hw_id', default='') | map('string')
+        | map('trim') | reject('truthy') | list | length == 0
+    fail_msg: "sync_in curated hardware_devices rows must include a non-empty hw_id."
+    quiet: true
+
+- name: Resolve curated physical locations
+  ansible.builtin.set_fact:
+    sync_in_curated_rack_sites: >-
+      {{ sync_in_curated_input_racks | selectattr('site', 'defined') | map(attribute='site')
+         | reject('equalto', '') | unique | list }}
+    sync_in_curated_root_locations: >-
+      {{ (sync_in_curated_snapshot.data.locations | default([], true)
+          | selectattr('parent', 'none') | map(attribute='name') | unique | list) }}
+
+- name: Select the one source site for rows without a site field
+  ansible.builtin.set_fact:
+    sync_in_curated_root_location: >-
+      {{ (sync_in_curated_rack_sites
+          if sync_in_curated_rack_sites | length > 0
+          else sync_in_curated_root_locations) | first | default('') }}
+
+- name: Require one curated root location for rows that can create Devices or locations
+  ansible.builtin.assert:
+    that:
+      - >-
+        (sync_in_curated_rack_sites | length == 1)
+        or ((sync_in_curated_rack_sites | length == 0)
+            and (sync_in_curated_root_locations | length == 1))
+    fail_msg: "sync_in curated rows require one site from sync_in_racks or one existing top-level location."
+    quiet: true
+  when: >-
+    (sync_in_curated_input_racks | length > 0)
+    or (sync_in_curated_input_devices | length > 0)
+    or (sync_in_curated_input_hardware_devices | length > 0)
+    or (sync_in_curated_input_hardware_modules | length > 0)
+
+- name: Normalize shared hardware serial and procurement fields
+  vars:
+    sync_in_curated_raw_serial: "{{ item.serial | default('', true) | string | trim }}"
+    sync_in_curated_raw_purchase_date: "{{ item.purchased | default('', true) | string | trim }}"
+    sync_in_curated_month_matches: >-
+      {{ sync_in_curated_raw_purchase_date | regex_findall(sync_in_curated_month_year_pattern) }}
+    sync_in_curated_raw_price: "{{ item.price | default('', true) | string | trim }}"
+    sync_in_curated_price_matches: >-
+      {{ sync_in_curated_raw_price | regex_findall(sync_in_curated_price_amount_pattern) }}
+    sync_in_curated_purchase_date: >-
+      {{ sync_in_curated_raw_purchase_date
+         if sync_in_curated_raw_purchase_date is match(sync_in_curated_iso_date_pattern)
+         else ((sync_in_curated_month_matches[0][1] ~ '-'
+                ~ ('%02d' | format(sync_in_curated_month_numbers[sync_in_curated_month_matches[0][0][:3] | lower]))
+                ~ '-01')
+               if (sync_in_curated_month_matches | length > 0)
+               and (sync_in_curated_month_matches[0][0][:3] | lower) in sync_in_curated_month_numbers
+               else '') }}
+    sync_in_curated_purchase_cents: >-
+      {{ (((sync_in_curated_price_matches[0] | replace(',', '') | float) * 100)
+           | round(0) | int)
+         if sync_in_curated_price_matches | length > 0 else none }}
+    sync_in_curated_purchase_fields: >-
+      {{ ({'purchase_date': sync_in_curated_purchase_date}
+          if sync_in_curated_purchase_date | length > 0 else {})
+         | combine({'purchase_price_cents': sync_in_curated_purchase_cents}
+                  if sync_in_curated_purchase_cents is not none else {})
+         | combine({'vendor': item.vendor | string | trim}
+                  if (item.vendor | default('', true) | string | trim | length) > 0 else {})
+         | combine({'receipt_ref': item.receipt_ref | string | trim}
+                  if (item.receipt_ref | default('', true) | string | trim | length) > 0 else {}) }}
+    sync_in_curated_normalized_serial: >-
+      {{ '' if sync_in_curated_raw_serial | lower in sync_in_curated_serial_placeholders
+         else sync_in_curated_raw_serial }}
+  ansible.builtin.set_fact:
+    sync_in_curated_procurement_rows: >-
+      {{ sync_in_curated_procurement_rows +
+         [item | combine({
+           'sync_in_curated_serial': sync_in_curated_normalized_serial,
+           'sync_in_curated_purchase_fields': sync_in_curated_purchase_fields
+         })] }}
+  loop: "{{ sync_in_curated_input_hardware_devices + sync_in_curated_input_hardware_modules }}"
+  loop_control:
+    label: "{{ item.hw_id }}"
+
+- name: Normalize curated racks
+  vars:
+    sync_in_curated_existing_rack: >-
+      {{ (sync_in_curated_snapshot.data.racks | default([], true)
+          | selectattr('name', 'equalto', item.name) | list | first) | default({}, true) }}
+    sync_in_curated_rack_site: "{{ item.site | default(sync_in_curated_root_location, true) }}"
+  ansible.builtin.set_fact:
+    sync_in_curated_racks: >-
+      {{ sync_in_curated_racks + [item | combine({
+        'sync_in_curated_site': sync_in_curated_rack_site,
+        'sync_in_curated_status': sync_in_curated_status_name,
+        'sync_in_curated_custom_fields':
+          (sync_in_curated_existing_rack.custom_field_data | default({}, true))
+          | combine({'sync_source': sync_in_curated_source_value}
+        )
+      })] }}
+  loop: "{{ sync_in_curated_input_racks }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Require every Rack to resolve a Nautobot location
+  ansible.builtin.assert:
+    that:
+      - >-
+        sync_in_curated_racks | map(attribute='sync_in_curated_site', default='')
+        | reject('truthy') | list | length == 0
+    fail_msg: "sync_in curated racks require a site from each row or one existing top-level location."
+    quiet: true
+
+- name: Normalize rack server Devices
+  vars:
+    sync_in_curated_existing_device: >-
+      {{ (sync_in_curated_snapshot.data.devices | default([], true)
+          | selectattr('name', 'equalto', item.name) | list | first) | default({}, true) }}
+    sync_in_curated_type_model: "{{ item.chassis | default('unknown', true) }}"
+    sync_in_curated_type_manufacturer: "{{ sync_in_curated_generic_manufacturer }}"
+    sync_in_curated_device_source_rack: "{{ item.rack | default('', true) | string | trim }}"
+    sync_in_curated_device_source_position: "{{ item.position | default(none) }}"
+    sync_in_curated_device_source_face: "{{ item.face | default('', true) | string | trim }}"
+    sync_in_curated_device_source_height: "{{ item.height | default(none) }}"
+    sync_in_curated_existing_device_type: >-
+      {{ (sync_in_curated_snapshot.data.device_types | default([], true)
+          | selectattr('model', 'equalto', sync_in_curated_type_model)
+          | selectattr('manufacturer.name', 'equalto', sync_in_curated_type_manufacturer)
+          | list | first) | default({}, true) }}
+    sync_in_curated_existing_bmc_interface: >-
+      {{ (sync_in_curated_existing_device.interfaces | default([], true)
+          | selectattr('name', 'equalto', sync_in_curated_bmc_interface_name)
+          | list | first) | default({}, true) }}
+  ansible.builtin.set_fact:
+    sync_in_curated_devices: >-
+      {{ sync_in_curated_devices + [
+        item | combine({
+          'sync_in_curated_location': sync_in_curated_root_location,
+          'sync_in_curated_status': sync_in_curated_status_name,
+          'sync_in_curated_role': item.role | default(sync_in_curated_server_role, true),
+          'sync_in_curated_type_model': sync_in_curated_type_model,
+          'sync_in_curated_type_manufacturer': sync_in_curated_type_manufacturer,
+          'sync_in_curated_type_custom_fields':
+            (sync_in_curated_existing_device_type.custom_field_data | default({}, true))
+            | combine({'sync_source': sync_in_curated_source_value}),
+          'sync_in_curated_serial': item.service_tag | default('', true) | string | trim,
+          'sync_in_curated_custom_fields':
+            (sync_in_curated_existing_device.custom_field_data | default({}, true))
+            | combine({'sync_source': sync_in_curated_source_value}),
+          'sync_in_curated_bmc_custom_fields':
+            (sync_in_curated_existing_bmc_interface.custom_field_data | default({}, true))
+            | combine({'sync_source': sync_in_curated_source_value}),
+          'sync_in_curated_has_bmc': (item.bmc_ip | default('', true) | length > 0)
+                                     or (item.bmc_mac | default('', true) | length > 0)
+        })
+        | combine({'sync_in_curated_rack': sync_in_curated_device_source_rack}
+                 if sync_in_curated_device_source_rack | length > 0 else {})
+        | combine({'sync_in_curated_position': sync_in_curated_device_source_position | int}
+                 if sync_in_curated_device_source_position is not none
+                 and sync_in_curated_device_source_position | string | trim | length > 0 else {})
+        | combine({'sync_in_curated_face': sync_in_curated_device_source_face}
+                 if sync_in_curated_device_source_face | length > 0 else {})
+        | combine({'sync_in_curated_type_u_height': sync_in_curated_device_source_height | int}
+                 if sync_in_curated_device_source_height is not none
+                 and sync_in_curated_device_source_height | string | trim | length > 0 else {})
+      ] }}
+  loop: "{{ sync_in_curated_input_devices }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: >-
+    (item.role | default(sync_in_curated_server_role, true))
+      != sync_in_curated_excluded_device_role_name
+    and (sync_in_curated_existing_device.role.name | default('', true))
+      != sync_in_curated_excluded_device_role_name
+
+- name: Resolve known Device names for module placement
+  ansible.builtin.set_fact:
+    sync_in_curated_known_device_names: >-
+      {{ [sync_in_curated_snapshot.data.devices | default([], true) | map(attribute='name') | list,
+          sync_in_curated_devices | map(attribute='name') | list,
+          sync_in_curated_input_hardware_devices | rejectattr('installed_in', 'defined')
+          | map(attribute='hw_id') | list]
+         | flatten | unique | list }}
+
+- name: Normalize standalone hardware Devices
+  vars:
+    sync_in_curated_normalized_hardware: >-
+      {{ (sync_in_curated_procurement_rows | selectattr('hw_id', 'equalto', item.hw_id)
+          | list | first) | default({}, true) }}
+    sync_in_curated_hardware_name: "{{ item.hw_id }}"
+    sync_in_curated_hardware_model: "{{ item.model | default(item.hw_id, true) }}"
+    sync_in_curated_hardware_manufacturer: >-
+      {{ item.manufacturer | default(sync_in_curated_generic_manufacturer, true) }}
+    sync_in_curated_existing_device: >-
+      {{ (sync_in_curated_snapshot.data.devices | default([], true)
+          | selectattr('name', 'equalto', sync_in_curated_hardware_name) | list | first) | default({}, true) }}
+    sync_in_curated_existing_device_type: >-
+      {{ (sync_in_curated_snapshot.data.device_types | default([], true)
+          | selectattr('model', 'equalto', sync_in_curated_hardware_model)
+          | selectattr('manufacturer.name', 'equalto', sync_in_curated_hardware_manufacturer)
+          | list | first) | default({}, true) }}
+  ansible.builtin.set_fact:
+    sync_in_curated_hardware_devices: >-
+      {{ sync_in_curated_hardware_devices + [item | combine({
+        'sync_in_curated_type_model': sync_in_curated_hardware_model,
+        'sync_in_curated_type_manufacturer': sync_in_curated_hardware_manufacturer,
+        'sync_in_curated_type_custom_fields':
+          (sync_in_curated_existing_device_type.custom_field_data | default({}, true))
+          | combine({'sync_source': sync_in_curated_source_value}),
+        'sync_in_curated_status': item.status | default(sync_in_curated_status_name, true),
+        'sync_in_curated_role': sync_in_curated_hardware_role,
+        'sync_in_curated_serial': sync_in_curated_normalized_hardware.sync_in_curated_serial | default('', true),
+        'sync_in_curated_custom_fields':
+          (sync_in_curated_existing_device.custom_field_data | default({}, true))
+          | combine(sync_in_curated_normalized_hardware.sync_in_curated_purchase_fields | default({}, true))
+          | combine({'sync_source': sync_in_curated_source_value})
+      })] }}
+  loop: "{{ sync_in_curated_input_hardware_devices }}"
+  loop_control:
+    label: "{{ item.hw_id }}"
+  when:
+    - not (item.installed_in | default('', true) | length > 0)
+    - item.hw_id not in sync_in_curated_dcim_device_names
+
+- name: Build desired Device names for hardware module placement
+  ansible.builtin.set_fact:
+    sync_in_curated_known_device_names: >-
+      {{ sync_in_curated_known_device_names
+         + (sync_in_curated_hardware_devices | map(attribute='hw_id') | list)
+         | unique | list }}
+
+- name: Normalize curated hardware module rows
+  vars:
+    sync_in_curated_normalized_hardware: >-
+      {{ (sync_in_curated_procurement_rows | selectattr('hw_id', 'equalto', item.hw_id)
+          | list | first) | default({}, true) }}
+    sync_in_curated_quantity: "{{ item.quantity | default(1, true) | int }}"
+    sync_in_curated_asset_tags: >-
+      {{ [] if sync_in_curated_drive_suppressed else
+         ([item.hw_id] if sync_in_curated_quantity | int <= 1 else
+          (range(1, (sync_in_curated_quantity | int) + 1) | map('string')
+           | map('regex_replace', '^', item.hw_id ~ '#') | list)) }}
+    sync_in_curated_drive_suppressed: >-
+      {{ (item.installed_in | default('', true) | length > 0)
+         and ((item.category | default('', true) | string | trim | lower)
+              is match(sync_in_curated_drive_category_pattern))
+         and ((sync_in_curated_snapshot.data.inventory_items | default([], true)
+               | selectattr('discovered', 'equalto', true)
+               | selectattr('name', 'match', sync_in_curated_drive_name_pattern)
+               | selectattr('device.name', 'equalto', item.installed_in)
+               | list | length) > 0) }}
+    sync_in_curated_owned_tag_pattern: >-
+      {{ '^' ~ (item.hw_id | string | regex_escape) ~ sync_in_curated_owned_asset_tag_suffix_pattern }}
+    sync_in_curated_existing_owned_modules: >-
+      {{ sync_in_curated_snapshot.data.modules | default([], true)
+         | selectattr('asset_tag', 'match', sync_in_curated_owned_tag_pattern)
+         | selectattr('custom_field_data.sync_source', 'equalto', sync_in_curated_source_value)
+         | list }}
+    sync_in_curated_existing_tags: "{{ sync_in_curated_existing_owned_modules | map(attribute='asset_tag') | list }}"
+    sync_in_curated_old_tag: >-
+      {{ item.hw_id if sync_in_curated_quantity | int > 1 else item.hw_id ~ '#1' }}
+    sync_in_curated_new_tag: >-
+      {{ item.hw_id ~ '#1' if sync_in_curated_quantity | int > 1 else item.hw_id }}
+    sync_in_curated_adopt_from: >-
+      {{ sync_in_curated_old_tag
+         if (sync_in_curated_asset_tags | length > 0)
+         and (sync_in_curated_old_tag in sync_in_curated_existing_tags)
+         and (sync_in_curated_new_tag not in sync_in_curated_existing_tags)
+         else '' }}
+    sync_in_curated_adopt_to: "{{ sync_in_curated_new_tag if sync_in_curated_adopt_from | length > 0 else '' }}"
+    sync_in_curated_existing_device_type: >-
+      {{ (sync_in_curated_snapshot.data.module_types | default([], true)
+          | selectattr('model', 'equalto', item.model | default(item.hw_id, true))
+          | selectattr('manufacturer.name', 'equalto',
+                       item.manufacturer | default(sync_in_curated_generic_manufacturer, true))
+          | list | first) | default({}, true) }}
+    sync_in_curated_modules_to_delete_for_row: >-
+      {{ (sync_in_curated_existing_owned_modules
+          | selectattr('parent_module_bay.parent_device.name', 'equalto', item.installed_in | default('')) | list)
+         if sync_in_curated_drive_suppressed else
+         (sync_in_curated_existing_owned_modules
+          | rejectattr('asset_tag', 'in', sync_in_curated_asset_tags)
+          | rejectattr('asset_tag', 'equalto', sync_in_curated_adopt_from) | list) }}
+  ansible.builtin.set_fact:
+    sync_in_curated_module_rows: >-
+      {{ sync_in_curated_module_rows + [item | combine({
+        'sync_in_curated_asset_tags': sync_in_curated_asset_tags,
+        'sync_in_curated_drive_suppressed': sync_in_curated_drive_suppressed,
+        'sync_in_curated_existing_modules': sync_in_curated_existing_owned_modules,
+        'sync_in_curated_adopt_from': sync_in_curated_adopt_from,
+        'sync_in_curated_adopt_to': sync_in_curated_adopt_to,
+        'sync_in_curated_modules_to_delete': sync_in_curated_modules_to_delete_for_row,
+        'sync_in_curated_parent_device': item.installed_in
+          if (item.installed_in | default('', true) | length > 0)
+          and item.installed_in in sync_in_curated_known_device_names else '',
+        'sync_in_curated_location': item.location | default('', true),
+        'sync_in_curated_module_type_model': item.model | default(item.hw_id, true),
+        'sync_in_curated_module_type_manufacturer':
+          item.manufacturer | default(sync_in_curated_generic_manufacturer, true),
+        'sync_in_curated_module_type_part_number': item.part_number | default('', true),
+        'sync_in_curated_module_type_custom_fields':
+          (sync_in_curated_existing_device_type.custom_field_data | default({}, true))
+          | combine({'sync_source': sync_in_curated_source_value}),
+        'sync_in_curated_status': item.status | default(sync_in_curated_status_name, true),
+        'sync_in_curated_serial': sync_in_curated_normalized_hardware.sync_in_curated_serial | default('', true),
+        'sync_in_curated_purchase_fields':
+          sync_in_curated_normalized_hardware.sync_in_curated_purchase_fields | default({}, true)
+      })] }}
+  loop: "{{ sync_in_curated_input_hardware_modules }}"
+  loop_control:
+    label: "{{ item.hw_id }}"
+
+- name: Flatten desired curated Module units
+  vars:
+    sync_in_curated_existing_unit: >-
+      {{ (item.0.sync_in_curated_existing_modules
+          | selectattr('asset_tag', 'equalto', item.1) | list | first)
+         | default((item.0.sync_in_curated_existing_modules
+                   | selectattr('asset_tag', 'equalto', item.0.sync_in_curated_adopt_from)
+                   | list | first), true) | default({}, true) }}
+    sync_in_curated_unit_custom_fields: >-
+      {{ (sync_in_curated_existing_unit.custom_field_data | default({}, true))
+         | combine(item.0.sync_in_curated_purchase_fields)
+         | combine({'sync_source': sync_in_curated_source_value}) }}
+  ansible.builtin.set_fact:
+    sync_in_curated_module_units: >-
+      {{ sync_in_curated_module_units + [{
+        'asset_tag': item.1,
+        'sync_in_curated_row': item.0,
+        'sync_in_curated_existing_module_id': sync_in_curated_existing_unit.id | default(''),
+        'sync_in_curated_parent_device': item.0.sync_in_curated_parent_device,
+        'sync_in_curated_location': item.0.sync_in_curated_location,
+        'sync_in_curated_module_type_model': item.0.sync_in_curated_module_type_model,
+        'sync_in_curated_module_type_manufacturer': item.0.sync_in_curated_module_type_manufacturer,
+        'sync_in_curated_module_type_part_number': item.0.sync_in_curated_module_type_part_number,
+        'sync_in_curated_module_type_custom_fields': item.0.sync_in_curated_module_type_custom_fields,
+        'sync_in_curated_status': item.0.sync_in_curated_status,
+        'sync_in_curated_serial': item.0.sync_in_curated_serial,
+        'sync_in_curated_custom_fields': sync_in_curated_unit_custom_fields
+      }] }}
+  loop: "{{ query('ansible.builtin.subelements', sync_in_curated_module_rows, 'sync_in_curated_asset_tags') }}"
+  loop_control:
+    label: "{{ item.1 }}"
+
+- name: Collect only row-owned surplus Modules
+  ansible.builtin.set_fact:
+    sync_in_curated_modules_to_delete: "{{ sync_in_curated_modules_to_delete + [item.1] }}"
+  loop: "{{ query('ansible.builtin.subelements', sync_in_curated_module_rows, 'sync_in_curated_modules_to_delete') }}"
+  loop_control:
+    label: "{{ item.1.asset_tag }}"
+
+- name: Build ModuleBay writes for installed module units
+  vars:
+    sync_in_curated_existing_bay_candidates: >-
+      {{ sync_in_curated_snapshot.data.module_bays | default([], true)
+         | selectattr('parent_device.name', 'equalto', item.sync_in_curated_parent_device)
+         | selectattr('name', 'in', [item.asset_tag, item.sync_in_curated_row.sync_in_curated_adopt_from]) | list }}
+    sync_in_curated_existing_bay: "{{ sync_in_curated_existing_bay_candidates | first | default({}, true) }}"
+  ansible.builtin.set_fact:
+    sync_in_curated_module_bays: >-
+      {{ sync_in_curated_module_bays + [{
+        'id': sync_in_curated_existing_bay.id | default(''),
+        'name': item.asset_tag,
+        'parent_device': item.sync_in_curated_parent_device,
+        'position': sync_in_curated_module_bay_position_prefix ~ item.asset_tag,
+        'custom_fields': (sync_in_curated_existing_bay.custom_field_data | default({}, true))
+                         | combine({'sync_source': sync_in_curated_source_value})
+      }] }}
+  loop: "{{ sync_in_curated_module_units }}"
+  loop_control:
+    label: "{{ item.asset_tag }}"
+  when: item.sync_in_curated_parent_device | length > 0
+
+- name: Find ModuleBay positions that conflict with existing bays
+  ansible.builtin.set_fact:
+    sync_in_curated_bay_conflicts: >-
+      {%- set ns = namespace(conflicts=[]) -%}
+      {%- for bay in sync_in_curated_module_bays -%}
+        {%- if (sync_in_curated_snapshot.data.module_bays | default([], true)
+                | selectattr('parent_device.name', 'equalto', bay.parent_device)
+                | selectattr('position', 'equalto', bay.position)
+                | rejectattr('name', 'equalto', bay.name) | list | length) > 0 -%}
+          {%- set ns.conflicts = ns.conflicts + [bay.position] -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ns.conflicts }}
+
+- name: Validate ModuleBay positions against existing bays
+  ansible.builtin.assert:
+    that:
+      - sync_in_curated_bay_conflicts | length == 0
+    fail_msg: "sync_in curated module bay position conflicts with an existing bay."
+    quiet: true
+
+- name: Identify empty row-owned bays belonging to surplus Modules
+  vars:
+    sync_in_curated_bay: >-
+      {{ (sync_in_curated_snapshot.data.module_bays | default([], true)
+          | selectattr('id', 'equalto', item.parent_module_bay.id | default(''))
+          | selectattr('custom_field_data.sync_source', 'equalto', sync_in_curated_source_value)
+          | list | first) | default({}, true) }}
+    sync_in_curated_bay_occupants: >-
+      {{ sync_in_curated_snapshot.data.modules | default([], true)
+         | selectattr('parent_module_bay.id', 'equalto', sync_in_curated_bay.id | default('')) | list }}
+    sync_in_curated_deleted_ids: "{{ sync_in_curated_modules_to_delete | map(attribute='id') | list }}"
+  ansible.builtin.set_fact:
+    sync_in_curated_module_bays_to_delete: "{{ sync_in_curated_module_bays_to_delete + [sync_in_curated_bay] }}"
+  loop: "{{ sync_in_curated_modules_to_delete }}"
+  loop_control:
+    label: "{{ item.asset_tag }}"
+  when:
+    - sync_in_curated_bay.id is defined
+    - sync_in_curated_bay_occupants | rejectattr('id', 'in', sync_in_curated_deleted_ids) | list | length == 0
+
+- name: Normalize curated child Locations
+  vars:
+    sync_in_curated_location_names: >-
+      {{ (sync_in_curated_hardware_devices | map(attribute='location') | list)
+         + (sync_in_curated_module_rows
+            | selectattr('sync_in_curated_parent_device', 'equalto', '')
+            | map(attribute='location') | list) }}
+  ansible.builtin.set_fact:
+    sync_in_curated_locations: >-
+      {{ sync_in_curated_locations + [{
+        'name': item,
+        'parent_location': sync_in_curated_root_location,
+        'location_type': sync_in_curated_location_type_name,
+        'status': sync_in_curated_status_name,
+        'custom_fields':
+          (((sync_in_curated_snapshot.data.locations | default([], true)
+             | selectattr('name', 'equalto', item)
+             | selectattr('parent.name', 'equalto', sync_in_curated_root_location)
+             | list | first) | default({}, true)).custom_field_data | default({}, true))
+          | combine({'sync_source': sync_in_curated_source_value})
+      }] }}
+  loop: "{{ sync_in_curated_location_names | reject('equalto', '') | unique | list }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - sync_in_curated_root_location | length > 0
+    - item != sync_in_curated_root_location
+
+- name: Normalize WAN circuits
+  vars:
+    sync_in_curated_existing_circuit: >-
+      {{ (sync_in_curated_snapshot.data.circuits | default([], true)
+          | selectattr('cid', 'equalto', item.circuit_id) | list | first) | default({}, true) }}
+  ansible.builtin.set_fact:
+    sync_in_curated_circuits: >-
+      {{ sync_in_curated_circuits + [item | combine({
+        'description': item.description | default('', true) | string | truncate(200, true, ''),
+        'status': item.status | default(sync_in_curated_status_name, true),
+        'custom_fields':
+          (sync_in_curated_existing_circuit.custom_field_data | default({}, true))
+          | combine({'sync_source': sync_in_curated_source_value})
+      })] }}
+  loop: "{{ sync_in_curated_input_wan_circuits }}"
+  loop_control:
+    label: "{{ item.circuit_id }}"
+
+- name: Require Bootstrap circuit types before applying curated circuits
+  ansible.builtin.assert:
+    that:
+      - >-
+        (sync_in_curated_snapshot.data.circuit_types | default([], true)
+         | selectattr('name', 'equalto', item.circuit_type) | list | length) > 0
+    fail_msg: >-
+      sync_in curated circuit '{{ item.circuit_id }}' requires missing Circuit Type
+      '{{ item.circuit_type }}'; provision it in Nautobot before applying circuits.
+    quiet: true
+  loop: "{{ sync_in_curated_circuits }}"
+  loop_control:
+    label: "{{ item.circuit_type }}"
+
+- name: Normalize WAN providers
+  vars:
+    sync_in_curated_existing_provider: >-
+      {{ (sync_in_curated_snapshot.data.providers | default([], true)
+          | selectattr('name', 'equalto', item) | list | first) | default({}, true) }}
+  ansible.builtin.set_fact:
+    sync_in_curated_providers: >-
+      {{ sync_in_curated_providers + [{
+        'name': item,
+        'custom_fields': (sync_in_curated_existing_provider.custom_field_data | default({}, true))
+                         | combine({'sync_source': sync_in_curated_source_value})
+      }] }}
+  loop: "{{ sync_in_curated_circuits | map(attribute='provider') | unique | list }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Normalize curated VLANs
+  vars:
+    sync_in_curated_existing_vlan: >-
+      {{ (sync_in_curated_snapshot.data.vlans | default([], true)
+          | selectattr('vid', 'equalto', item.vid | int) | list | first) | default({}, true) }}
+  ansible.builtin.set_fact:
+    sync_in_curated_vlans: >-
+      {{ sync_in_curated_vlans + [item | combine({
+        'vid': item.vid | int,
+        'status': sync_in_curated_status_name,
+        'custom_fields':
+          (sync_in_curated_existing_vlan.custom_field_data | default({}, true))
+          | combine({'sync_source': sync_in_curated_source_value})
+      })] }}
+  loop: "{{ sync_in_curated_input_vlans }}"
+  loop_control:
+    label: "{{ item.vid }}"
+
+- name: Normalize curated Prefixes
+  vars:
+    sync_in_curated_existing_prefix: >-
+      {{ (sync_in_curated_snapshot.data.prefixes | default([], true)
+          | selectattr('prefix', 'equalto', item.prefix) | list | first) | default({}, true) }}
+  ansible.builtin.set_fact:
+    sync_in_curated_prefixes: >-
+      {{ sync_in_curated_prefixes + [item | combine({
+        'status': sync_in_curated_status_name,
+        'type': 'Network',
+        'custom_fields':
+          (sync_in_curated_existing_prefix.custom_field_data | default({}, true))
+          | combine({'sync_source': sync_in_curated_source_value})
+      })] }}
+  loop: "{{ sync_in_curated_input_prefixes }}"
+  loop_control:
+    label: "{{ item.prefix }}"
+
+- name: Normalize curated reservation IP addresses
+  vars:
+    sync_in_curated_reservation_host: "{{ item.address | string | split('/') | first }}"
+    sync_in_curated_reservation_address: "{{ sync_in_curated_reservation_host }}/32"
+    sync_in_curated_existing_ip_address: >-
+      {{ (sync_in_curated_snapshot.data.ip_addresses | default([], true)
+          | selectattr('address', 'equalto', sync_in_curated_reservation_address)
+          | list | first) | default({}, true) }}
+  ansible.builtin.set_fact:
+    sync_in_curated_reservations: >-
+      {{ sync_in_curated_reservations + [item | combine({
+        'sync_in_curated_address': sync_in_curated_reservation_address,
+        'sync_in_curated_status': sync_in_curated_status_name,
+        'sync_in_curated_custom_fields':
+          (sync_in_curated_existing_ip_address.custom_field_data | default({}, true))
+          | combine({'sync_source': sync_in_curated_source_value})
+      })] }}
+  loop: "{{ sync_in_curated_input_reservations }}"
+  loop_control:
+    label: "{{ item.dns_name | default('reservation') }}"
+
+- name: Select the manufacturers and Device roles that curated rows need and Nautobot lacks
+  vars:
+    sync_in_curated_wanted_devices: "{{ sync_in_curated_devices + sync_in_curated_hardware_devices }}"
+    sync_in_curated_wanted_manufacturers: >-
+      {{ (sync_in_curated_wanted_devices | map(attribute='sync_in_curated_type_manufacturer') | list)
+         + (sync_in_curated_module_rows | map(attribute='sync_in_curated_module_type_manufacturer') | list) }}
+    sync_in_curated_wanted_roles: >-
+      {{ sync_in_curated_wanted_devices | map(attribute='sync_in_curated_role') | list }}
+  ansible.builtin.set_fact:
+    sync_in_curated_missing_manufacturers: >-
+      {{ sync_in_curated_wanted_manufacturers | unique | difference(
+           sync_in_curated_snapshot.data.manufacturers | default([], true) | map(attribute='name') | list) }}
+    sync_in_curated_missing_roles: >-
+      {{ sync_in_curated_wanted_roles | unique | difference(
+           sync_in_curated_snapshot.data.roles | default([], true) | map(attribute='name') | list) }}

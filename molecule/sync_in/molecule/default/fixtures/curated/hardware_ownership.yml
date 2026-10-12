@@ -1,0 +1,35 @@
+---
+sync_in_racks: []
+sync_in_devices:
+  - name: rack-server-a
+    chassis: Rack Chassis
+    role: server
+sync_in_hardware_devices:
+  - hw_id: rack-server-a
+    category: Server
+    manufacturer: Example
+    model: Rack Chassis
+    status: Active
+    location: parts
+    installed_in: null
+  - hw_id: standalone-a
+    category: Workstation
+    manufacturer: Example
+    model: Workstation Chassis
+    status: Active
+    location: parts
+    installed_in: null
+sync_in_hardware_modules: []
+sync_in_wan_circuits: []
+sync_in_vlans: []
+sync_in_prefixes: []
+sync_in_reservations: []
+sync_in_curated_snapshot:
+  data:
+    devices: []
+    device_types: []
+    locations:
+      - name: site-a
+        parent: null
+    manufacturers: []
+    roles: []

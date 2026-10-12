@@ -1,0 +1,613 @@
+---
+sync_in_pve_source_marker: proxmox
+sync_in_pve_hex_prefix_regex: '^0x'
+sync_in_pve_token_id_regex: '^[^!]+![^!]+$'
+sync_in_pve_vendor_token_regex: '^[A-Za-z]+$'
+sync_in_pve_disk_interface_regex: '^(scsi|virtio|sata|ide)[0-9]+$'
+sync_in_pve_net_interface_regex: '^net[0-9]+$'
+sync_in_pve_net_suffix_regex: '^net'
+sync_in_pve_ipconfig_key_prefix: ipconfig
+sync_in_pve_drive_vendor_placeholders:
+  - ''
+  - '-'
+  - n/a
+  - na
+  - none
+  - null
+  - unknown
+  - '?'
+sync_in_pve_zfs_used_values:
+  - ZFS
+  - zfs_member
+sync_in_pve_nautobot_snapshot_query: |
+  query {
+    devices {
+      id name serial status { name } role { name } location { name }
+      device_type { model } primary_ip4 { address }
+      interfaces { id name type mgmt_only ip_addresses { id address } }
+      custom_field_data: _custom_field_data
+    }
+    inventory_items {
+      id name serial part_id description discovered manufacturer { name } device { name }
+      custom_field_data: _custom_field_data
+    }
+    virtual_machines {
+      id name cluster { id name } role { name } status { name } vcpus memory disk
+      tags { name } primary_ip4 { address } custom_field_data: _custom_field_data
+      interfaces {
+        id name enabled mac_address status { name } ip_addresses { address }
+        custom_field_data: _custom_field_data
+      }
+    }
+    ip_addresses {
+      id address dns_name status { name }
+      interfaces { id name device { name } }
+      custom_field_data: _custom_field_data
+    }
+    prefixes { prefix namespace { name } }
+    clusters { id name cluster_type { name } custom_field_data: _custom_field_data }
+    statuses { id name }
+    roles { id name }
+    tags { id name }
+    cluster_types { id name }
+    manufacturers { id name }
+    device_types { id model manufacturer { name } }
+  }
+sync_in_pve_drive_readback_query: |
+  query {
+    inventory_items {
+      id name device { name } custom_field_data: _custom_field_data
+    }
+  }
+sync_in_pve_api_scheme: "{{ sync_in_pve_api_url | urlsplit('scheme') }}"
+sync_in_pve_api_path: "{{ sync_in_pve_api_url | urlsplit('path') }}"
+sync_in_pve_api_base_url: "{{ sync_in_pve_api_url | regex_replace(sync_in_pve_trailing_slash_regex, '') }}"
+sync_in_pve_api_host: "{{ sync_in_pve_api_url | urlsplit('hostname') }}"
+sync_in_pve_api_port: >-
+  {{ sync_in_pve_api_url | urlsplit('port')
+     | default(sync_in_pve_api_port_default, true) | int }}
+sync_in_pve_api_user: "{{ sync_in_pve_token_id.split('!') | first }}"
+sync_in_pve_api_token_name: "{{ sync_in_pve_token_id.split('!') | last }}"
+sync_in_pve_node_names: >-
+  {{ sync_in_pve_node_info.proxmox_nodes | map(attribute='node') | list }}
+sync_in_pve_node_mapping_records: >-
+  {%- set ns = namespace(records=[]) -%}
+  {%- for node in sync_in_pve_node_info.proxmox_nodes -%}
+  {%- set mapping = sync_in_pve_node_map
+      | selectattr('name', 'equalto', node.node) | list | first | default({}) -%}
+  {%- set device_name = mapping.nautobot_device_name | default(node.node, true) -%}
+  {%- set ns.records = ns.records + [{
+    'node': node.node,
+    'name': device_name,
+    'management_dns_name': mapping.management_dns_name | default(device_name, true),
+    'commissioned': mapping.commissioned | default(true) | bool,
+    'status': node.status,
+    'physical_ram_mb': (node.maxmem | int) // 1048576
+  }] -%}
+  {%- endfor -%}
+  {{ ns.records | to_json | from_json }}
+sync_in_pve_node_records: >-
+  {%- if 'nodes' in sync_in_pve_components -%}
+  {%- set ns = namespace(records=[]) -%}
+  {%- for node in sync_in_pve_node_mapping_records if node.commissioned -%}
+  {%- set ram = node.physical_ram_mb -%}
+  {%- set ns.records = ns.records + [{
+    'node': node.node,
+    'name': node.name,
+    'management_dns_name': node.management_dns_name,
+    'status': node.status,
+    'physical_ram_mb': ram,
+    'custom_fields': {
+      'sync_source': sync_in_pve_source_marker,
+      'physical_ram_mb': ram
+    }
+  }] -%}
+  {%- endfor -%}
+  {{ ns.records | to_json | from_json }}
+  {%- else -%}{{ [] }}{%- endif -%}
+sync_in_pve_node_device_creates: >-
+  {%- set ns = namespace(records=[]) -%}
+  {%- for node in sync_in_pve_node_records -%}
+  {%- if sync_in_pve_snapshot_data.devices
+        | selectattr('name', 'equalto', node.name) | list | length == 0 -%}
+  {%- set ns.records = ns.records + [node] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ ns.records | to_json | from_json }}
+sync_in_pve_node_device_updates: >-
+  {%- set ns = namespace(records=[]) -%}
+  {%- for node in sync_in_pve_node_records -%}
+  {%- if sync_in_pve_snapshot_data.devices
+        | selectattr('name', 'equalto', node.name) | list | length > 0 -%}
+  {%- set ns.records = ns.records + [node | combine({'custom_fields': {'physical_ram_mb': node.physical_ram_mb}})] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ ns.records | to_json | from_json }}
+sync_in_pve_cluster_records: >-
+  {%- set ns = namespace(records=[]) -%}
+  {%- for node in sync_in_pve_node_records -%}
+  {%- set ns.records = ns.records + [{
+    'name': node.node,
+    'custom_fields': {'sync_source': sync_in_pve_source_marker}
+  }] -%}
+  {%- endfor -%}
+  {{ ns.records | to_json | from_json }}
+sync_in_pve_node_binding_records: >-
+  {%- if 'nodes' in sync_in_pve_components -%}
+  {%- set ns = namespace(records=[]) -%}
+  {%- for node in sync_in_pve_node_records -%}
+  {%- set device = sync_in_pve_snapshot_data.devices
+      | selectattr('name', 'equalto', node.name) | list | first | default({}) -%}
+  {%- set interface = device.interfaces | default([])
+      | selectattr('name', 'equalto', 'mgmt') | list | first | default({}) -%}
+  {%- set address = sync_in_pve_snapshot_data.ip_addresses
+      | selectattr('dns_name', 'defined')
+      | selectattr('dns_name', 'equalto', node.management_dns_name) | list | first | default({}) -%}
+  {%- set assigned = address.interfaces | default([])
+      | selectattr('name', 'equalto', 'mgmt')
+      | selectattr('device.name', 'equalto', node.name) | list -%}
+  {%- set ns.records = ns.records + [{
+    'node': node.node,
+    'name': node.name,
+    'management_dns_name': node.management_dns_name,
+    'device_exists': device | length > 0,
+    'interface_exists': interface | length > 0,
+    'address': address.address | default(''),
+    'association_exists': assigned | length > 0,
+    'current_primary_ip4': device.primary_ip4.address | default('')
+  }] -%}
+  {%- endfor -%}
+  {{ ns.records | to_json | from_json }}
+  {%- else -%}{{ [] }}{%- endif -%}
+sync_in_pve_node_unbound_nodes: >-
+  {%- set ns = namespace(records=[]) -%}
+  {%- for binding in sync_in_pve_node_binding_records if not binding.address -%}
+  {%- set ns.records = ns.records + [{
+    'name': binding.name,
+    'management_dns_name': binding.management_dns_name
+  }] -%}
+  {%- endfor -%}
+  {{ ns.records | to_json | from_json }}
+sync_in_pve_drive_records: >-
+  {%- if 'drives' in sync_in_pve_components -%}
+  {%- set ns = namespace(records=[]) -%}
+  {%- for response in sync_in_pve_disk_results.results -%}
+  {%- for disk in response.json.data -%}
+  {%- set media = disk.type | default('unknown', true) | string | trim -%}
+  {%- if media | lower != 'usb' -%}
+  {%- set reported_serial = disk.serial | default('', true) | string | trim | lower -%}
+  {%- set reported_wwn = disk.wwn | default('', true) | string | trim | lower -%}
+  {%- set serial_norm = reported_serial | regex_replace(sync_in_pve_hex_prefix_regex, '') -%}
+  {%- set wwn_norm = reported_wwn | regex_replace(sync_in_pve_hex_prefix_regex, '') -%}
+  {%- set serial = '' if serial_norm and wwn_norm and serial_norm == wwn_norm else serial_norm -%}
+  {%- set identity = serial or wwn_norm -%}
+  {%- set node = sync_in_pve_node_mapping_records
+      | selectattr('node', 'equalto', response.item.node) | list | first
+      | default({'name': response.item.node}) -%}
+  {%- set model = disk.model | default('', true) | string | trim | replace('_', ' ') -%}
+  {%- set vendor = disk.vendor | default('', true) | string | trim -%}
+  {%- set model_vendor = (
+    model.split() | select('match', sync_in_pve_vendor_token_regex) | list | first | default('')
+  ) -%}
+  {%- set manufacturer = (
+    vendor if vendor | lower not in sync_in_pve_drive_vendor_placeholders
+    else (model_vendor | title if model_vendor else sync_in_pve_manufacturer_name)
+  ) -%}
+  {%- set used = disk.used | default('free', true) | string | trim -%}
+  {%- set details = [media, (disk.size | default('?', true) | string) ~ ' bytes', 'used=' ~ used] -%}
+  {%- if wwn_norm -%}{%- set details = details + ['wwn=' ~ wwn_norm] -%}{%- endif -%}
+  {%- if not serial and wwn_norm -%}
+  {%- set details = details + ['transport reports WWN in place of serial'] -%}
+  {%- endif -%}
+  {%- if used in sync_in_pve_zfs_used_values -%}{%- set details = details + ['ZFS pool member'] -%}{%- endif -%}
+  {%- if identity -%}
+  {%- set ns.records = ns.records + [{
+    'device': node.name,
+    'name': 'Drive ' ~ identity,
+    'identity': identity,
+    'wwn': wwn_norm,
+    'manufacturer': manufacturer,
+    'part_id': model,
+    'serial': serial,
+    'description': details | join(', ') | truncate(255, true, ''),
+    'discovered': true,
+    'custom_fields': {'sync_source': sync_in_pve_source_marker}
+  }] -%}
+  {%- endif -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- endfor -%}
+  {{ ns.records | to_json | from_json }}
+  {%- else -%}{{ [] }}{%- endif -%}
+sync_in_pve_drive_expected_counts: >-
+  {%- set ns = namespace(counts={}) -%}
+  {%- for node in sync_in_pve_node_mapping_records -%}
+  {%- set count = sync_in_pve_drive_records
+      | selectattr('device', 'equalto', node.name) | list | length -%}
+  {%- set ns.counts = ns.counts | combine({node.name: count}) -%}
+  {%- endfor -%}
+  {{ ns.counts | to_json | from_json }}
+sync_in_pve_guest_records: >-
+  {%- if 'virtualization' in sync_in_pve_components -%}
+  {%- set ns = namespace(records=[]) -%}
+  {%- set prefixes = sync_in_pve_snapshot_data.prefixes
+      | selectattr('namespace.name', 'equalto', sync_in_pve_namespace_name) | list -%}
+  {%- for guest in sync_in_pve_vm_info.proxmox_vms -%}
+  {%- if not guest.template | default(false) | bool -%}
+  {%- set config_interfaces = namespace(items=[]) -%}
+  {%- for config in guest.config | default({}, true) | dict2items -%}
+  {%- if config.key is match(sync_in_pve_net_interface_regex) -%}
+  {%- set config_interfaces.items = config_interfaces.items + [{
+    'key': config.key,
+    'index': config.key | regex_replace(sync_in_pve_net_suffix_regex, '') | int,
+    'value': config.value
+  }] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- set interfaces = namespace(records=[]) -%}
+  {%- set guest_ips = namespace(records=[]) -%}
+  {%- for interface in config_interfaces.items | sort(attribute='index') -%}
+  {%- if guest.type == 'qemu' -%}
+  {%- set ipconfig_key = sync_in_pve_ipconfig_key_prefix ~ (interface.index | string) -%}
+  {%- set option_text = guest.config[ipconfig_key] | default('', true) | string -%}
+  {%- else -%}
+  {%- set option_text = interface.value | string -%}
+  {%- endif -%}
+  {%- set options = dict(
+    option_text.split(',') | select('search', '=') | map('split', '=', 1) | list
+  ) -%}
+  {%- if guest.type == 'qemu' -%}
+  {%- set interface_name = interface.key -%}
+  {%- set mac_address = (interface.value | string).split(',') | first | split('=') | last -%}
+  {%- else -%}
+  {%- set interface_name = options.name | default(interface.key, true) -%}
+  {%- set mac_address = options.hwaddr | default('', true) -%}
+  {%- endif -%}
+  {%- set candidate = options.ip | default('', true) -%}
+  {%- set interface_ips = namespace(records=[]) -%}
+  {%- set host = candidate.split('/') | first -%}
+  {%- set ipv4 = host | ansible.utils.ipaddr('ipv4') if host else false -%}
+  {%- if ipv4 -%}
+  {%- set in_managed_prefix = namespace(value=false) -%}
+  {%- for prefix in prefixes -%}
+  {%- if ipv4 | ansible.utils.ipaddr(prefix.prefix) -%}
+  {%- set in_managed_prefix.value = true -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- if in_managed_prefix.value -%}
+  {%- set ip = {'ip_address': ipv4 ~ '/32', 'is_primary': guest_ips.records | length == 0} -%}
+  {%- set interface_ips.records = interface_ips.records + [ip] -%}
+  {%- set guest_ips.records = guest_ips.records + [ip] -%}
+  {%- endif -%}
+  {%- endif -%}
+  {%- set existing_vm = sync_in_pve_snapshot_data.virtual_machines
+      | selectattr('name', 'equalto', guest.name) | list | first | default({}) -%}
+  {%- set existing_interface = existing_vm.interfaces | default([])
+      | selectattr('name', 'equalto', interface_name) | list | first | default({}) -%}
+  {%- set interface_record = {
+    'virtual_machine': guest.name,
+    'name': interface_name,
+    'mac_address': mac_address,
+    'enabled': true,
+    'ip_addresses_state': (
+      'replace' if not existing_interface
+      or existing_interface.custom_field_data.sync_source | default('') == sync_in_pve_source_marker
+      else 'merge'
+    ),
+    'ip_addresses': interface_ips.records
+  } -%}
+  {%- if not existing_interface
+        or existing_interface.custom_field_data.sync_source | default('') == sync_in_pve_source_marker -%}
+  {%- set interface_record = interface_record | combine({
+    'custom_fields': {'sync_source': sync_in_pve_source_marker}
+  }) -%}
+  {%- endif -%}
+  {%- set interfaces.records = interfaces.records + [interface_record] -%}
+  {%- endfor -%}
+  {%- set config_disks = namespace(records=[]) -%}
+  {%- for config in guest.config | default({}, true) | dict2items -%}
+  {%- if config.key is match(sync_in_pve_disk_interface_regex) and ':' in (config.value | string) -%}
+  {%- set config_disks.records = config_disks.records + [{
+    'interface': config.key,
+    'datastore': (config.value | string).split(':') | first
+  }] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- set raw_tags = guest.tags | default([], true) -%}
+  {%- set tag_values = raw_tags.split(';') if raw_tags is string else raw_tags -%}
+  {%- set tag_names = tag_values | map('string') | map('trim') | reject('equalto', '') | unique | list -%}
+  {%- set vmid = guest.vmid | int -%}
+  {%- set node = sync_in_pve_node_mapping_records
+      | selectattr('node', 'equalto', guest.node) | list | first
+      | default({'name': guest.node}) -%}
+  {%- set primary_ip = guest_ips.records | first | default({}) -%}
+  {%- set ns.records = ns.records + [{
+    'name': guest.name,
+    'vmid': vmid,
+    'node': guest.node,
+    'cluster': guest.node,
+    'role': sync_in_pve_vm_role_name,
+    'status': sync_in_pve_status_name,
+    'vcpus': guest.maxcpu | default(guest.cpus, true) | int,
+    'memory': (guest.maxmem | int) // 1048576,
+    'disk': (guest.maxdisk | default(0, true) | int) // 1073741824,
+    'primary_ip4': primary_ip.ip_address | default(''),
+    'interfaces': interfaces.records,
+    'tags': tag_names,
+    'custom_fields': {
+      'sync_source': sync_in_pve_source_marker,
+      'vmid': vmid,
+      'current_node': node.name,
+      'live_disks': config_disks.records
+    }
+  }] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ ns.records | to_json | from_json }}
+  {%- else -%}{{ [] }}{%- endif -%}
+sync_in_pve_vm_name_matches: >-
+  {%- set data = sync_in_pve_snapshot_data -%}
+  {%- set ns = namespace(records=[]) -%}
+  {%- for wanted in sync_in_pve_guest_records -%}
+  {%- set matches = data.virtual_machines | selectattr('name', 'equalto', wanted.name) | list -%}
+  {%- set ns.records = ns.records + [{'guest': wanted, 'matches': matches}] -%}
+  {%- endfor -%}
+  {{ ns.records | to_json | from_json }}
+sync_in_pve_vm_adoption_errors: >-
+  {%- set ns = namespace(messages=[]) -%}
+  {%- for match in sync_in_pve_vm_name_matches -%}
+  {%- if match.matches | length > 1 -%}
+  {%- set ns.messages = ns.messages + [
+    'Refusing VM adoption for ' ~ match.guest.name ~ ': multiple exact-name matches exist'
+  ] -%}
+  {%- elif match.matches | length == 1
+        and match.matches[0].cluster.name | default('') != match.guest.cluster
+        and match.matches[0].custom_field_data.sync_source | default('') != sync_in_pve_source_marker -%}
+  {%- set ns.messages = ns.messages + [
+    'Refusing VM adoption for ' ~ match.guest.name ~ ': existing cluster '
+    ~ (match.matches[0].cluster.name | default('unknown'))
+    ~ ' differs from live cluster ' ~ match.guest.cluster
+  ] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ ns.messages | to_json | from_json }}
+sync_in_pve_vm_cluster_moves: >-
+  {%- set ns = namespace(records=[]) -%}
+  {%- for match in sync_in_pve_vm_name_matches if match.matches | length == 1 -%}
+  {%- set current = match.matches[0] -%}
+  {%- if current.custom_field_data.sync_source | default('') == sync_in_pve_source_marker
+        and current.cluster.name | default('') != match.guest.cluster -%}
+  {%- set ns.records = ns.records + [{
+    'id': current.id,
+    'name': match.guest.name,
+    'cluster': match.guest.cluster
+  }] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ ns.records | to_json | from_json }}
+sync_in_pve_interface_records: >-
+  {{ sync_in_pve_guest_records | map(attribute='interfaces') | flatten | list }}
+sync_in_pve_ip_records: >-
+  {%- set ns = namespace(records=[]) -%}
+  {%- for guest in sync_in_pve_guest_records -%}
+  {%- for interface in guest.interfaces -%}
+  {%- for address in interface.ip_addresses -%}
+  {%- if address.ip_address not in ns.records | map(attribute='address') | list -%}
+  {%- set existing = sync_in_pve_snapshot_data.ip_addresses
+      | selectattr('address', 'equalto', address.ip_address) | list | first | default({}) -%}
+  {%- set owner = existing.custom_field_data.sync_source | default('') -%}
+  {%- if not existing or owner == sync_in_pve_source_marker -%}
+  {%- set ns.records = ns.records + [{
+    'address': address.ip_address,
+    'custom_fields': {'sync_source': sync_in_pve_source_marker}
+  }] -%}
+  {%- endif -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- endfor -%}
+  {%- endfor -%}
+  {{ ns.records | to_json | from_json }}
+sync_in_pve_manufacturer_names: >-
+  {{ (sync_in_pve_drive_records | map(attribute='manufacturer') | list
+      + ([sync_in_pve_manufacturer_name]
+         if ('nodes' in sync_in_pve_components and sync_in_pve_node_records | length > 0)
+            or 'drives' in sync_in_pve_components else []))
+     | unique | list }}
+sync_in_pve_tag_names: >-
+  {{ sync_in_pve_guest_records | map(attribute='tags') | flatten | unique | list }}
+sync_in_pve_snapshot_data: "{{ sync_in_pve_nautobot_snapshot.data }}"
+sync_in_pve_reference_creates: >-
+  {%- set data = sync_in_pve_snapshot_data -%}
+  {%- set ns = namespace(statuses=[], roles=[], tags=[], cluster_types=[], manufacturers=[], device_types=[]) -%}
+  {%- set status_names = data.statuses | map(attribute='name') | list -%}
+  {%- if (('nodes' in sync_in_pve_components and sync_in_pve_node_records | length > 0)
+          or 'virtualization' in sync_in_pve_components)
+        and sync_in_pve_status_name not in status_names -%}
+  {%- set status_content_types = [] -%}
+  {%- if 'nodes' in sync_in_pve_components and sync_in_pve_node_records | length > 0 -%}
+  {%- set status_content_types = status_content_types + ['dcim.device', 'dcim.interface'] -%}
+  {%- endif -%}
+  {%- if 'virtualization' in sync_in_pve_components -%}
+  {%- set status_content_types = status_content_types + [
+    'ipam.ipaddress', 'virtualization.virtualmachine', 'virtualization.vminterface'
+  ] -%}
+  {%- endif -%}
+  {%- set ns.statuses = [{
+    'name': sync_in_pve_status_name,
+    'content_types': status_content_types
+  }] -%}
+  {%- endif -%}
+  {%- set role_names = data.roles | map(attribute='name') | list -%}
+  {%- set wanted_roles = [] -%}
+  {%- if 'nodes' in sync_in_pve_components and sync_in_pve_node_records | length > 0 -%}
+  {%- set wanted_roles = wanted_roles + [
+    {'name': sync_in_pve_node_role_name, 'content_types': ['dcim.device']},
+  ] -%}
+  {%- endif -%}
+  {%- if 'virtualization' in sync_in_pve_components -%}
+  {%- set wanted_roles = wanted_roles + [
+    {'name': sync_in_pve_vm_role_name, 'content_types': ['virtualization.virtualmachine']}
+  ] -%}
+  {%- endif -%}
+  {%- for role in wanted_roles -%}
+  {%- if role.name not in role_names -%}
+  {%- set ns.roles = ns.roles + [role] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- set tag_names = data.tags | map(attribute='name') | list -%}
+  {%- for tag in sync_in_pve_tag_names if 'virtualization' in sync_in_pve_components -%}
+  {%- if tag not in tag_names -%}
+  {%- set ns.tags = ns.tags + [{'name': tag, 'content_types': ['virtualization.virtualmachine']}] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- if 'nodes' in sync_in_pve_components and sync_in_pve_node_records | length > 0
+        and sync_in_pve_cluster_type_name not in data.cluster_types | map(attribute='name') | list -%}
+  {%- set ns.cluster_types = [{'name': sync_in_pve_cluster_type_name}] -%}
+  {%- endif -%}
+  {%- set manufacturer_names = data.manufacturers | map(attribute='name') | list -%}
+  {%- for manufacturer in sync_in_pve_manufacturer_names -%}
+  {%- if manufacturer not in manufacturer_names -%}
+  {%- set ns.manufacturers = ns.manufacturers + [{'name': manufacturer}] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- set has_device_type = 'nodes' not in sync_in_pve_components
+      or sync_in_pve_node_records | length == 0 or
+      (data.device_types | selectattr('model', 'equalto', sync_in_pve_device_type_model)
+       | selectattr('manufacturer.name', 'equalto', sync_in_pve_manufacturer_name) | list | length > 0) -%}
+  {%- if 'nodes' in sync_in_pve_components and sync_in_pve_node_records | length > 0 and not has_device_type -%}
+  {%- set ns.device_types = [{
+    'model': sync_in_pve_device_type_model,
+    'manufacturer': sync_in_pve_manufacturer_name
+  }] -%}
+  {%- endif -%}
+  {{ {
+    'statuses': ns.statuses,
+    'roles': ns.roles,
+    'tags': ns.tags,
+    'cluster_types': ns.cluster_types,
+    'manufacturers': ns.manufacturers,
+    'device_types': ns.device_types
+  } | to_json | from_json }}
+sync_in_pve_prune_lists: >-
+  {%- set data = sync_in_pve_snapshot_data -%}
+  {%- set device_names = sync_in_pve_node_mapping_records | map(attribute='name') | list -%}
+  {%- set cluster_names = sync_in_pve_node_names -%}
+  {%- set vmids = sync_in_pve_guest_records | map(attribute='vmid') | list -%}
+  {%- set drive_keys = namespace(values=[]) -%}
+  {%- for drive in sync_in_pve_drive_records -%}
+  {%- set drive_keys.values = drive_keys.values + [drive.device ~ '|' ~ drive.name] -%}
+  {%- endfor -%}
+  {%- set interface_keys = namespace(values=[]) -%}
+  {%- for interface in sync_in_pve_interface_records -%}
+  {%- set interface_keys.values = interface_keys.values + [interface.virtual_machine ~ '|' ~ interface.name] -%}
+  {%- endfor -%}
+  {%- set ip_addresses = sync_in_pve_ip_records | map(attribute='address') | list -%}
+  {%- set ns = namespace(
+    devices=[], inventory_items=[], virtual_machines=[], vm_interfaces=[], ip_addresses=[], clusters=[]
+  ) -%}
+  {%- for item in data.devices -%}
+  {%- set owned = item.custom_field_data.sync_source | default('') == sync_in_pve_source_marker -%}
+  {%- if 'nodes' in sync_in_pve_components and owned and item.name not in device_names -%}
+  {%- set ns.devices = ns.devices + [item] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- for item in data.inventory_items -%}
+  {%- set device_name = item.device.name | default('', true) -%}
+  {%- set key = device_name ~ '|' ~ item.name -%}
+  {%- set owned = item.custom_field_data.sync_source | default('') == sync_in_pve_source_marker -%}
+  {%- if 'drives' in sync_in_pve_components and owned and key not in drive_keys.values -%}
+  {%- set ns.inventory_items = ns.inventory_items + [item] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- for vm in data.virtual_machines -%}
+  {%- set vmid = vm.custom_field_data.vmid | default(-1) | int -%}
+  {%- set owned = vm.custom_field_data.sync_source | default('') == sync_in_pve_source_marker -%}
+  {%- if 'virtualization' in sync_in_pve_components and owned and vmid not in vmids -%}
+  {%- set ns.virtual_machines = ns.virtual_machines + [vm] -%}
+  {%- endif -%}
+  {%- for interface in vm.interfaces | default([], true) -%}
+  {%- set key = vm.name ~ '|' ~ interface.name -%}
+  {%- set owned = interface.custom_field_data.sync_source | default('') == sync_in_pve_source_marker -%}
+  {%- if 'virtualization' in sync_in_pve_components and owned and key not in interface_keys.values -%}
+  {%- set ns.vm_interfaces = ns.vm_interfaces + [interface] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- endfor -%}
+  {%- for address in data.ip_addresses -%}
+  {%- set owned = address.custom_field_data.sync_source | default('') == sync_in_pve_source_marker -%}
+  {%- if 'virtualization' in sync_in_pve_components and owned and address.address not in ip_addresses -%}
+  {%- set ns.ip_addresses = ns.ip_addresses + [address] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- for cluster in data.clusters -%}
+  {%- set owned = cluster.custom_field_data.sync_source | default('') == sync_in_pve_source_marker -%}
+  {%- if 'nodes' in sync_in_pve_components and owned and cluster.name not in cluster_names -%}
+  {%- set remaining = namespace(ids=[]) -%}
+  {%- for vm in data.virtual_machines -%}
+  {%- if vm.cluster.id | default('') == cluster.id -%}
+  {%- set owner = vm.custom_field_data.sync_source | default('') -%}
+  {%- set vmid = vm.custom_field_data.vmid | default(-1) | int -%}
+  {%- set source_vm = sync_in_pve_guest_records | selectattr('vmid', 'equalto', vmid) | list | first | default({}) -%}
+  {%- if owner != sync_in_pve_source_marker or 'virtualization' not in sync_in_pve_components
+        or (vmid in vmids and source_vm.cluster == cluster.name) -%}
+  {%- set remaining.ids = remaining.ids + [vm.id] -%}
+  {%- endif -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- if remaining.ids | length == 0 -%}
+  {%- set ns.clusters = ns.clusters + [cluster] -%}
+  {%- endif -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- set stale_item_ids = ns.inventory_items | map(attribute='id') | list -%}
+  {%- set safe_devices = namespace(records=[]) -%}
+  {%- for device in ns.devices -%}
+  {%- set remaining_items = namespace(ids=[]) -%}
+  {%- for item in data.inventory_items -%}
+  {%- set item_device_name = item.device.name | default('', true) -%}
+  {%- if item_device_name == device.name and item.id not in stale_item_ids -%}
+  {%- set remaining_items.ids = remaining_items.ids + [item.id] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {%- if remaining_items.ids | length == 0 -%}
+  {%- set safe_devices.records = safe_devices.records + [device] -%}
+  {%- endif -%}
+  {%- endfor -%}
+  {{ {
+    'devices': safe_devices.records,
+    'inventory_items': ns.inventory_items,
+    'virtual_machines': ns.virtual_machines,
+    'vm_interfaces': ns.vm_interfaces,
+    'ip_addresses': ns.ip_addresses,
+    'clusters': ns.clusters
+  } | to_json | from_json }}
+sync_in_pve_family_owned_counts:
+  nodes: >-
+    {{ (sync_in_pve_snapshot_data.devices
+        | selectattr('custom_field_data.sync_source', 'equalto', sync_in_pve_source_marker) | list | length)
+       + (sync_in_pve_snapshot_data.clusters
+        | selectattr('custom_field_data.sync_source', 'equalto', sync_in_pve_source_marker) | list | length) }}
+  virtualization: >-
+    {{ (sync_in_pve_snapshot_data.virtual_machines
+        | selectattr('custom_field_data.sync_source', 'equalto', sync_in_pve_source_marker) | list | length)
+       + (sync_in_pve_snapshot_data.virtual_machines | map(attribute='interfaces') | flatten
+        | selectattr('custom_field_data.sync_source', 'equalto', sync_in_pve_source_marker) | list | length)
+       + (sync_in_pve_snapshot_data.ip_addresses
+        | selectattr('custom_field_data.sync_source', 'equalto', sync_in_pve_source_marker) | list | length) }}
+  drives: >-
+    {{ sync_in_pve_snapshot_data.inventory_items
+       | selectattr('custom_field_data.sync_source', 'equalto', sync_in_pve_source_marker) | list | length }}
+sync_in_pve_family_prune_counts:
+  nodes: "{{ sync_in_pve_prune_lists.devices | length + sync_in_pve_prune_lists.clusters | length }}"
+  virtualization: >-
+    {{ sync_in_pve_prune_lists.virtual_machines | length
+       + sync_in_pve_prune_lists.vm_interfaces | length
+       + sync_in_pve_prune_lists.ip_addresses | length }}
+  drives: "{{ sync_in_pve_prune_lists.inventory_items | length }}"
+sync_in_pve_purge_total: >-
+  {{ (sync_in_pve_prune_lists.devices | length)
+     + (sync_in_pve_prune_lists.inventory_items | length)
+     + (sync_in_pve_prune_lists.virtual_machines | length)
+     + (sync_in_pve_prune_lists.vm_interfaces | length)
+     + (sync_in_pve_prune_lists.ip_addresses | length)
+     + (sync_in_pve_prune_lists.clusters | length) }}

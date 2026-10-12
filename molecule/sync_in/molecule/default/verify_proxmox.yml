@@ -1,0 +1,261 @@
+---
+- name: Verify live Proxmox source transforms
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Reset Proxmox regression results
+      ansible.builtin.set_fact:
+        sync_in_pve_regression_failures: []
+
+    - name: Load Proxmox transform definitions
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../roles/sync_in/vars/proxmox.yml"
+
+    - name: Load Proxmox default values
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../roles/sync_in/defaults/main/10_proxmox.yml"
+
+    - name: Load live fixtures
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/proxmox/live.yml"
+
+    - name: Load matching owned objects
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/proxmox/owned_equal.yml"
+
+    - name: Transform matching Proxmox records
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+    - name: Assert node, guest, drive and no-op prune transforms
+      ansible.builtin.assert:
+        that:
+          - sync_in_pve_node_records[0].physical_ram_mb == 8192
+          - sync_in_pve_drive_records | length == 2
+          - sync_in_pve_drive_records[0].serial == "abcd1234"
+          - sync_in_pve_drive_records[0].name == "Drive abcd1234"
+          - sync_in_pve_drive_records[0].wwn == "5000000000000001"
+          - sync_in_pve_drive_records[0].manufacturer == "Acme"
+          - sync_in_pve_drive_records[0].part_id == "123 ACME 1000"
+          - sync_in_pve_drive_records[1].serial == ""
+          - sync_in_pve_drive_records[1].identity == "5000000000000002"
+          - sync_in_pve_guest_records[0].custom_fields.vmid == 101
+          - sync_in_pve_guest_records[0].custom_fields.current_node == "node-a"
+          - >-
+            sync_in_pve_guest_records[0].custom_fields.live_disks ==
+            [{'interface': 'scsi0', 'datastore': 'fast'}]
+          - sync_in_pve_guest_records[0].interfaces[0].ip_addresses[0].ip_address ==
+            "192.0.2.10/32"
+          - sync_in_pve_prune_lists.devices | length == 0
+          - sync_in_pve_purge_total == 0
+          - sync_in_pve_reference_creates.statuses | length == 0
+          - sync_in_pve_reference_creates.roles | length == 0
+          - sync_in_pve_reference_creates.tags | length == 0
+          - sync_in_pve_reference_creates.cluster_types | length == 0
+          - sync_in_pve_reference_creates.manufacturers | length == 0
+          - sync_in_pve_reference_creates.device_types | length == 0
+
+    - name: Report matching fixture result
+      ansible.builtin.debug:
+        msg: >-
+          FIXTURE PASS: node RAM; serial and WWN normalization; vendor fallback;
+          USB drive filter; guest /32; live_disks; equal source snapshot has no stale records
+
+    - name: Load removed-source fixture
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/proxmox/owned_removed.yml"
+
+    - name: Transform removed-source records
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+    - name: Assert removed disk and guest are pruned
+      ansible.builtin.assert:
+        that:
+          - sync_in_pve_prune_lists.inventory_items | map(attribute='id') | list == ['drive-3']
+          - sync_in_pve_prune_lists.virtual_machines | map(attribute='id') | list == ['vm-2']
+          - sync_in_pve_prune_lists.vm_interfaces | map(attribute='id') | list == ['interface-2']
+          - sync_in_pve_prune_lists.ip_addresses | map(attribute='id') | list == ['ip-2']
+          - sync_in_pve_prune_lists.devices | map(attribute='id') | list == ['device-2']
+          - sync_in_pve_prune_lists.clusters | map(attribute='id') | list == ['cluster-2']
+
+    - name: Report removed-source fixture result
+      ansible.builtin.debug:
+        msg: >-
+          FIXTURE PASS: removed disk and guest prune with their owned interfaces and IPs
+
+    - name: Load guest network fixtures
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/proxmox/network_cases.yml"
+
+    - name: Transform guest network fixtures
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+    - name: Assert guest network parsing and ownership
+      ansible.builtin.assert:
+        that:
+          - >-
+            sync_in_pve_guest_records | map(attribute='name') | list
+            == ['qemu-stopped', 'lxc-stopped', 'dhcp-guest', 'outside-prefix', 'plain-qemu']
+          - >-
+            sync_in_pve_guest_records[0].interfaces | map(attribute='name') | list
+            == ['net0', 'net2', 'net10']
+          - sync_in_pve_guest_records[0].interfaces[0].ip_addresses[0].ip_address == '192.0.2.10/32'
+          - sync_in_pve_guest_records[0].interfaces[1].ip_addresses | length == 0
+          - sync_in_pve_guest_records[0].interfaces[2].ip_addresses[0].ip_address == '198.51.100.10/32'
+          - sync_in_pve_guest_records[0].primary_ip4 == '192.0.2.10/32'
+          - sync_in_pve_guest_records[1].interfaces[0].name == 'eth0'
+          - sync_in_pve_guest_records[1].interfaces[0].mac_address == '02:00:00:00:02:00'
+          - sync_in_pve_guest_records[1].interfaces[0].ip_addresses[0].ip_address == '198.51.100.11/32'
+          - sync_in_pve_guest_records[1].interfaces[1].ip_addresses | length == 0
+          - sync_in_pve_guest_records[1].interfaces[2].ip_addresses | length == 0
+          - sync_in_pve_guest_records[2].interfaces[0].ip_addresses | length == 0
+          - sync_in_pve_guest_records[3].interfaces[0].ip_addresses | length == 0
+          - sync_in_pve_guest_records[4].interfaces[0].name == 'net0'
+          - sync_in_pve_guest_records[4].interfaces[0].mac_address == '02:00:00:00:06:00'
+          - sync_in_pve_guest_records[4].interfaces[0].ip_addresses | length == 0
+          - sync_in_pve_guest_records[4].primary_ip4 == ''
+          - sync_in_pve_ip_records | map(attribute='address') | list == ['192.0.2.10/32', '198.51.100.10/32']
+          - >-
+            sync_in_pve_guest_records | selectattr('name', 'equalto', 'lxc-stopped')
+            | map(attribute='interfaces') | flatten | selectattr('name', 'equalto', 'eth0')
+            | map(attribute='ip_addresses') | flatten | map(attribute='ip_address') | list
+            == ['198.51.100.11/32']
+          - "'198.51.100.11/32' not in (sync_in_pve_ip_records | map(attribute='address') | list)"
+          - >-
+            '198.51.100.11/32' not in
+            (sync_in_pve_prune_lists.ip_addresses | map(attribute='address') | list)
+          - sync_in_pve_transform_passed
+
+    - name: Reset and build the guest network plan
+      ansible.builtin.set_fact:
+        sync_in_plan: {}
+
+    - name: Build the guest network plan
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_plan.yml"
+
+    - name: Assert the foreign IP is not rewritten by the guest plan
+      ansible.builtin.assert:
+        that:
+          - >-
+            (sync_in_pve_virtualization_plan.create
+             + sync_in_pve_virtualization_plan['update']
+             + sync_in_pve_virtualization_plan.delete)
+            | selectattr('object_kind', 'equalto', 'ip_address')
+            | selectattr('identifier', 'equalto', '198.51.100.11/32') | list | length == 0
+
+    - name: Report guest network fixture result
+      ansible.builtin.debug:
+        msg: >-
+          FIXTURE PASS: stopped QEMU and LXC; QEMU and LXC formats; DHCP, manual and missing IPs; template skip;
+          managed-prefix filter; curated IP association; numeric interface order and primary IP
+
+    - name: Load empty prefix fixture
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/proxmox/empty_prefixes.yml"
+
+    - name: Transform guests without managed prefixes
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+    - name: Assert no guest IP is retained without a prefix
+      ansible.builtin.assert:
+        that:
+          - sync_in_pve_ip_records | length == 0
+          - sync_in_pve_interface_records | map(attribute='ip_addresses') | flatten | length == 0
+          - sync_in_pve_transform_passed
+
+    - name: Report empty prefix fixture result
+      ansible.builtin.debug:
+        msg: "FIXTURE PASS: empty managed-prefix snapshot yields no IP records and passes"
+
+    - name: Load invalid guest type fixture
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/proxmox/invalid_guest_type.yml"
+
+    - name: Prove an invalid guest type fails closed
+      block:
+        - name: Transform invalid guest type records
+          ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+        - name: Fail when the transform accepted invalid guest type
+          ansible.builtin.fail:
+            msg: The invalid guest type was accepted by the transform.
+      rescue:
+        - name: Assert the invalid guest type guard message
+          ansible.builtin.assert:
+            that:
+              - >-
+                ansible_failed_result['msg'] == 'Proxmox read incomplete: <cluster>'
+
+        - name: Report invalid guest type fixture result
+          ansible.builtin.debug:
+            msg: "FIXTURE PASS: non-template guest without a valid type fails with Proxmox read incomplete: <cluster>"
+
+    - name: Load offline-node fixture
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/proxmox/offline.yml"
+
+    - name: Prove an offline node fails closed
+      block:
+        - name: Transform offline-node records
+          ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+        - name: Fail when the transform accepted offline-node
+          ansible.builtin.fail:
+            msg: The offline node was accepted by the transform.
+      rescue:
+        - name: Assert the offline-node guard message
+          ansible.builtin.assert:
+            that:
+              - >-
+                ansible_failed_result['msg'] == 'Proxmox read incomplete: <nodes>'
+
+        - name: Report offline-node fixture result
+          ansible.builtin.debug:
+            msg: "FIXTURE PASS: offline node fails with Proxmox read incomplete: <nodes>"
+
+    - name: Restore live node fixture
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/proxmox/live.yml"
+
+    - name: Load over-limit prune fixture
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/proxmox/too_many_prunes.yml"
+
+    - name: Prove the prune fraction guard fails closed
+      block:
+        - name: Transform over-limit prune records
+          ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+        - name: Fail when the transform accepted over-limit prune
+          ansible.builtin.fail:
+            msg: The over-limit prune was accepted by the transform.
+      rescue:
+        - name: Assert the prune fraction guard message
+          ansible.builtin.assert:
+            that:
+              - >-
+                ansible_failed_result.results | selectattr('failed', 'defined') | selectattr('failed')
+                | map(attribute='msg') | list
+                == ['Proxmox prune exceeds sync_in_prune_max_fraction for drives; count exceeds '
+                    ~ 'sync_in_prune_min_allowance (0)']
+
+        - name: Report over-limit prune fixture result
+          ansible.builtin.debug:
+            msg: "FIXTURE PASS: prune fraction exceeds sync_in_prune_max_fraction and fails closed"
+
+    - name: Verify exact-name virtualization adoption
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/proxmox/verify_virtualization_adoption.yml"
+
+    - name: Verify node management binding and commissioning behavior
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/proxmox/verify_node_management.yml"
+
+    - name: Verify drive readback planning and mismatch handling
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/proxmox/verify_drive_readback.yml"
+
+    - name: Observe M2 regression assertions against the existing role
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/verify_m2.yml"
+
+    - name: Reject any Proxmox migration or renamed-node regression
+      ansible.builtin.assert:
+        that:
+          - sync_in_pve_regression_failures | length == 0
+        fail_msg: "Proxmox regression assertions failed: {{ sync_in_pve_regression_failures | join('; ') }}"

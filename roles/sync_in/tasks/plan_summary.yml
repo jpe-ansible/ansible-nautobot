@@ -1,0 +1,9 @@
+---
+- name: Summarize planned changes by family and action
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.key }}: create={{ item.value.create | length }},
+      update={{ item.value['update'] | length }}, delete={{ item.value.delete | length }}
+  loop: "{{ sync_in_plan | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"

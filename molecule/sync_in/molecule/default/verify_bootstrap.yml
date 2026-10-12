@@ -1,0 +1,128 @@
+---
+- name: Verify Bootstrap plan fixtures
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Test absent Bootstrap repository selects create
+      block:
+        - name: Load absent repository fixture
+          ansible.builtin.include_vars:
+            file: "{{ lookup('env', 'MOLECULE_SCENARIO_DIRECTORY') }}/fixtures/bootstrap/repository_absent.yml"
+        - name: Set desired Bootstrap repository inputs
+          ansible.builtin.set_fact:
+            sync_in_bootstrap_repo_name: Nautobot Bootstrap
+            sync_in_bootstrap_repo_url: https://example.invalid/nautobot.git
+            sync_in_bootstrap_branch: develop
+        - name: Evaluate Bootstrap plan
+          ansible.builtin.include_role:
+            name: sync_in
+            tasks_from: bootstrap_plan.yml
+        - name: Assert absent repository plan
+          ansible.builtin.assert:
+            that:
+              - sync_in_bootstrap_repo_action == 'create'
+              - sync_in_bootstrap_job_id == 'job-bootstrap'
+
+    - name: Test a changed Bootstrap branch selects update
+      block:
+        - name: Load changed branch fixture
+          ansible.builtin.include_vars:
+            file: "{{ lookup('env', 'MOLECULE_SCENARIO_DIRECTORY') }}/fixtures/bootstrap/repository_update.yml"
+        - name: Set desired Bootstrap repository inputs
+          ansible.builtin.set_fact:
+            sync_in_bootstrap_repo_name: Nautobot Bootstrap
+            sync_in_bootstrap_repo_url: https://example.invalid/nautobot.git
+            sync_in_bootstrap_branch: develop
+        - name: Evaluate Bootstrap plan
+          ansible.builtin.include_role:
+            name: sync_in
+            tasks_from: bootstrap_plan.yml
+        - name: Assert changed branch plan
+          ansible.builtin.assert:
+            that:
+              - sync_in_bootstrap_repo_action == 'update'
+              - sync_in_bootstrap_repo_id == 'repository-bootstrap'
+
+    - name: Test an equal Bootstrap repository selects unchanged
+      block:
+        - name: Load equal repository fixture
+          ansible.builtin.include_vars:
+            file: "{{ lookup('env', 'MOLECULE_SCENARIO_DIRECTORY') }}/fixtures/bootstrap/repository_equal.yml"
+        - name: Set desired Bootstrap repository inputs
+          ansible.builtin.set_fact:
+            sync_in_bootstrap_repo_name: Nautobot Bootstrap
+            sync_in_bootstrap_repo_url: https://example.invalid/nautobot.git
+            sync_in_bootstrap_branch: develop
+        - name: Evaluate Bootstrap plan
+          ansible.builtin.include_role:
+            name: sync_in
+            tasks_from: bootstrap_plan.yml
+        - name: Assert equal repository plan
+          ansible.builtin.assert:
+            that:
+              - sync_in_bootstrap_repo_action == 'unchanged'
+              - sync_in_bootstrap_repo_id == 'repository-bootstrap'
+
+    - name: Test a missing Bootstrap job has a stable failure
+      block:
+        - name: Load missing job fixture
+          ansible.builtin.include_vars:
+            file: "{{ lookup('env', 'MOLECULE_SCENARIO_DIRECTORY') }}/fixtures/bootstrap/job_not_found.yml"
+        - name: Set desired Bootstrap repository inputs
+          ansible.builtin.set_fact:
+            sync_in_bootstrap_repo_name: Nautobot Bootstrap
+            sync_in_bootstrap_repo_url: https://example.invalid/nautobot.git
+            sync_in_bootstrap_branch: develop
+        - name: Evaluate Bootstrap plan with no job
+          ansible.builtin.include_role:
+            name: sync_in
+            tasks_from: bootstrap_plan.yml
+        - name: Fail when a missing job is accepted
+          ansible.builtin.fail:
+            msg: The plan accepted a missing Bootstrap job.
+      rescue:
+        - name: Assert missing job failure message
+          ansible.builtin.assert:
+            that: "ansible_failed_result.msg == 'Bootstrap job not found: Bootstrap to Nautobot'"
+
+    - name: Test a successful Bootstrap job result passes
+      block:
+        - name: Load successful job result fixture
+          ansible.builtin.include_vars:
+            file: "{{ lookup('env', 'MOLECULE_SCENARIO_DIRECTORY') }}/fixtures/bootstrap/job_success.yml"
+        - name: Set desired Bootstrap repository inputs
+          ansible.builtin.set_fact:
+            sync_in_bootstrap_repo_name: Nautobot Bootstrap
+            sync_in_bootstrap_repo_url: https://example.invalid/nautobot.git
+            sync_in_bootstrap_branch: develop
+        - name: Evaluate successful Bootstrap plan
+          ansible.builtin.include_role:
+            name: sync_in
+            tasks_from: bootstrap_plan.yml
+        - name: Assert successful Bootstrap status
+          ansible.builtin.assert:
+            that:
+              - sync_in_bootstrap_final_job_result.status == 'SUCCESS'
+              - sync_in_bootstrap_repo_action == 'create'
+
+    - name: Test a failed Bootstrap job result names its status
+      block:
+        - name: Load failed job result fixture
+          ansible.builtin.include_vars:
+            file: "{{ lookup('env', 'MOLECULE_SCENARIO_DIRECTORY') }}/fixtures/bootstrap/job_failure.yml"
+        - name: Set desired Bootstrap repository inputs
+          ansible.builtin.set_fact:
+            sync_in_bootstrap_repo_name: Nautobot Bootstrap
+            sync_in_bootstrap_repo_url: https://example.invalid/nautobot.git
+            sync_in_bootstrap_branch: develop
+        - name: Evaluate failed Bootstrap plan
+          ansible.builtin.include_role:
+            name: sync_in
+            tasks_from: bootstrap_plan.yml
+        - name: Fail when a failed job result is accepted
+          ansible.builtin.fail:
+            msg: The plan accepted a failed Bootstrap job result.
+      rescue:
+        - name: Assert failed job result message
+          ansible.builtin.assert:
+            that: "ansible_failed_result.msg == 'Bootstrap job finished with status FAILURE'"

@@ -1,0 +1,61 @@
+---
+- name: Load drive readback planning fixture
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/proxmox/live.yml"
+    name: sync_in_drive_fixture
+
+- name: Set drive-only planning inputs
+  ansible.builtin.set_fact:
+    sync_in_pve_components: [drives]
+    sync_in_pve_node_info: "{{ sync_in_drive_fixture.sync_in_pve_node_info }}"
+    sync_in_pve_disk_results: "{{ sync_in_drive_fixture.sync_in_pve_disk_results }}"
+    sync_in_pve_nautobot_snapshot: "{{ sync_in_adoption_fixture.sync_in_pve_nautobot_snapshot }}"
+    sync_in_plan: {}
+    sync_in_plan_only: true
+
+- name: Transform and plan desired drives
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+- name: Build the drive-only plan
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_plan.yml"
+
+- name: Assert plan-only reports the expected per-node drive count
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_drives_plan.expected_counts['node-a'] == 2
+
+- name: Prove plan-only skips drive readback
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_drive_readback.yml"
+
+- name: Assert plan-only did not query or validate persisted drive counts
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_drive_readback.skipped | default(false)
+      - sync_in_pve_drive_readback_mismatches is not defined
+
+- name: Load mismatched persisted drive counts
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/fixtures/proxmox/drive_readback.yml"
+    name: sync_in_drive_readback_fixture
+
+- name: Set mismatched persisted drive count inputs
+  ansible.builtin.set_fact:
+    sync_in_pve_drive_expected_counts: "{{ sync_in_drive_readback_fixture.sync_in_pve_drive_expected_counts }}"
+    sync_in_pve_drive_readback: "{{ sync_in_drive_readback_fixture.sync_in_pve_drive_readback }}"
+    sync_in_plan_only: false
+
+- name: Prove a persisted drive count mismatch fails
+  block:
+    - name: Compare mismatched persisted drive counts
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_drive_readback_assert.yml"
+
+    - name: Fail if the drive count mismatch was accepted
+      ansible.builtin.fail:
+        msg: A persisted drive count mismatch was accepted.
+  rescue:
+    - name: Assert the drive count mismatch is named
+      ansible.builtin.assert:
+        that:
+          - "'Proxmox drive readback count mismatch' in (ansible_failed_result.msg | default(''))"
+          - "'node-a' in (ansible_failed_result.msg | default(''))"

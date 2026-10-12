@@ -1,0 +1,66 @@
+---
+sync_in_racks:
+  - name: Rack-Selector
+    site: site-a
+sync_in_devices:
+  - name: Server-Selector
+    chassis: Chassis-Selector
+    service_tag: SERVER-1
+    bmc_ip: 192.0.2.30
+sync_in_hardware_devices:
+  - hw_id: Hardware-Selector
+    category: server
+    manufacturer: Example
+    model: Hardware Model
+    part_number: HW-1
+    status: Active
+    location: parts
+sync_in_hardware_modules:
+  - hw_id: Module-Selector
+    category: memory
+    manufacturer: Example
+    model: Module Model
+    part_number: MOD-1
+    status: Active
+    location: parts
+sync_in_wan_circuits:
+  - circuit_id: CID-SELECTOR
+    provider: Provider-Selector
+    circuit_type: Internet
+    priority: 1
+    status: Active
+    description: Selector circuit
+sync_in_vlans:
+  - vid: 123
+    name: VLAN-Selector
+    cidr: 192.0.2.0/24
+sync_in_prefixes:
+  - prefix: 192.0.2.0/24
+    vlan_vid: 123
+    role: VLAN-Selector
+sync_in_reservations:
+  - address: 192.0.2.30
+    dns_name: selector.example.invalid
+sync_in_curated_snapshot:
+  data:
+    inventory_items: []
+    modules: []
+    module_bays: []
+    racks: []
+    devices: []
+    manufacturers: []
+    roles: []
+    device_types: []
+    module_types: []
+    locations:
+      - id: location-site-a
+        name: site-a
+        parent: null
+    providers: []
+    circuit_types:
+      - id: circuit-type-internet
+        name: Internet
+    circuits: []
+    vlans: []
+    prefixes: []
+    ip_addresses: []

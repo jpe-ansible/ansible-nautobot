@@ -1,0 +1,2 @@
+---
+sync_in_pve_trailing_slash_regex: '/+$'

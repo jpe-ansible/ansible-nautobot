@@ -1,0 +1,107 @@
+---
+# Caller slice schemas mirror today's seed-bundle rows:
+# - racks: name; optional site location name.
+# - devices: name, chassis, optional bmc_ip/bmc_mac, service_tag, mgmt_ip.
+# - hardware_devices: hw_id, category, manufacturer, model, part_number, status,
+#   location, optional serial/purchased/price/vendor/receipt_ref/installed_in.
+# - hardware_modules: hw_id, category, manufacturer, model, part_number, status,
+#   location, optional quantity/serial/purchased/price/vendor/receipt_ref/installed_in.
+# - wan_circuits: circuit_id, provider, circuit_type, priority, status, description.
+# - vlans: vid, name, cidr (the slice retains cidr although VLAN writes do not use it).
+# - prefixes: prefix, vlan_vid, role (the transform supplies the VLAN-name role fallback).
+# - reservations: address, dns_name; address is stored as a /32 host reservation.
+# Procurement fields remain the shared keys purchase_date, purchase_price_cents,
+# vendor and receipt_ref. Empty values are omitted when merging custom field data.
+
+sync_in_curated_source_value: curated
+sync_in_curated_module_api_url: >-
+  {{ (sync_in_nautobot_url | regex_replace(sync_in_pve_trailing_slash_regex, '')) ~ '/api/dcim/modules/' }}
+sync_in_curated_status_name: Active
+sync_in_curated_server_role: server
+sync_in_curated_hardware_role: hardware
+sync_in_curated_excluded_device_role_name: "{{ sync_in_pve_node_role_name }}"
+sync_in_curated_dcim_device_names: >-
+  {{ sync_in_devices | default([], true) | map(attribute='name') | list }}
+sync_in_curated_bmc_interface_name: BMC
+sync_in_curated_bmc_interface_type: other
+sync_in_curated_location_type_name: Site
+sync_in_curated_generic_manufacturer: Generic
+sync_in_curated_device_role_content_types:
+  - dcim.device
+sync_in_curated_drive_name_pattern: '^Drive '
+sync_in_curated_drive_category_pattern: '^(ssd|hdd|nvme)'
+sync_in_curated_owned_asset_tag_suffix_pattern: '(#\d+)?$'
+sync_in_curated_module_bay_position_prefix: 'curated:'
+# ModuleBay positions are stable labels derived from each expanded asset tag.
+# The asset tag is unique per module unit, so two curated bays on one device differ.
+sync_in_curated_serial_placeholders:
+  - ''
+  - '-'
+  - '--'
+  - '—'
+  - n/a
+  - na
+  - none
+  - unknown
+  - tbd
+  - '?'
+  - system serial number
+  - default string
+  - to be filled by o.e.m.
+  - to be filled by oem
+  - not specified
+  - not applicable
+  - '0123456789'
+  - '00000000'
+
+sync_in_curated_month_numbers:
+  jan: 1
+  feb: 2
+  mar: 3
+  apr: 4
+  may: 5
+  jun: 6
+  jul: 7
+  aug: 8
+  sep: 9
+  oct: 10
+  nov: 11
+  dec: 12
+sync_in_curated_month_year_pattern: '^([A-Za-z]{3,})\s+(\d{4})$'
+sync_in_curated_iso_date_pattern: '^\d{4}-\d{2}-\d{2}$'
+sync_in_curated_price_amount_pattern: '\$?\s*([\d,]+(?:\.\d{1,2})?)'
+
+sync_in_curated_graphql_query: |
+  query {
+    inventory_items { id name discovered device { name } }
+    modules {
+      id asset_tag serial status { name } module_type { model } location { name }
+      custom_field_data: _custom_field_data
+      parent_module_bay { id name parent_device { name } }
+    }
+    module_bays { id name position custom_field_data: _custom_field_data parent_device { name } }
+    racks { id name status { name } custom_field_data: _custom_field_data location { name } }
+    devices {
+      id name serial asset_tag status { name } role { name } custom_field_data: _custom_field_data
+      location { name }
+      rack { name } position face
+      device_type { model manufacturer { name } }
+      interfaces { id name type mgmt_only mac_address status { name } custom_field_data: _custom_field_data }
+    }
+    manufacturers { name }
+    roles { name }
+    device_types { id model u_height custom_field_data: _custom_field_data manufacturer { name } }
+    module_types { id model part_number custom_field_data: _custom_field_data manufacturer { name } }
+    locations { id name status { name } location_type { name } custom_field_data: _custom_field_data parent { name } }
+    providers { id name custom_field_data: _custom_field_data }
+    circuit_types { id name custom_field_data: _custom_field_data }
+    circuits {
+      id cid description status { name } custom_field_data: _custom_field_data
+      provider { name } circuit_type { name }
+    }
+    vlans { id vid name status { name } custom_field_data: _custom_field_data }
+    prefixes {
+      id prefix status { name } type vlan { vid } role { name } custom_field_data: _custom_field_data
+    }
+    ip_addresses { id address dns_name status { name } type custom_field_data: _custom_field_data }
+  }

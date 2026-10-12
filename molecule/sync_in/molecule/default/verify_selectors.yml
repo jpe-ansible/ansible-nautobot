@@ -1,0 +1,250 @@
+---
+- name: Verify sync_in family selectors and plan-only inputs
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Load Proxmox transform variables and defaults
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../roles/sync_in/vars/proxmox.yml"
+
+    - name: Load Proxmox component defaults
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../roles/sync_in/defaults/main/10_proxmox.yml"
+
+    - name: Load live Proxmox fixture and removed ownership snapshot
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/proxmox/live.yml"
+
+    - name: Load removed ownership snapshot
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/proxmox/owned_removed.yml"
+
+    - name: Select only Proxmox virtualization
+      ansible.builtin.set_fact:
+        sync_in_pve_components: [virtualization]
+        sync_in_pve_disk_results: {}
+        sync_in_plan: {}
+
+    - name: Transform only the Proxmox virtualization family
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+    - name: Build the Proxmox virtualization plan
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_plan.yml"
+
+    - name: Assert virtualization selection excludes node and drive plans and prunes
+      ansible.builtin.assert:
+        that:
+          - sync_in_plan.keys() | list == ['virtualization']
+          - sync_in_plan.virtualization.delete | map(attribute='object_kind') | list
+            | difference(['virtual_machine', 'vm_interface', 'ip_address']) | length == 0
+          - sync_in_pve_prune_lists.devices | length == 0
+          - sync_in_pve_prune_lists.clusters | length == 0
+          - sync_in_pve_prune_lists.inventory_items | length == 0
+          - sync_in_pve_drive_records | length == 0
+        fail_msg: "virtualization selection produced a node, drive, inventory-item, or unrelated prune row"
+
+    - name: Restore the Proxmox source fixture and select only drives
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/proxmox/live.yml"
+        name: sync_in_selector_live_fixture
+
+    - name: Select the Proxmox drives family
+      ansible.builtin.set_fact:
+        sync_in_pve_components: [drives]
+        sync_in_pve_disk_results: "{{ sync_in_selector_live_fixture.sync_in_pve_disk_results }}"
+        sync_in_plan: {}
+
+    - name: Transform only the Proxmox drives family
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_transform.yml"
+
+    - name: Build the Proxmox drives plan
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/proxmox_plan.yml"
+
+    - name: Assert drives selection excludes virtual machine rows
+      ansible.builtin.assert:
+        that:
+          - sync_in_plan.keys() | list == ['drives']
+          - >-
+            (sync_in_plan.drives.create + sync_in_plan.drives['update'] + sync_in_plan.drives.delete)
+            | map(attribute='object_kind') | intersect(['virtual_machine', 'vm_interface', 'ip_address'])
+            | length == 0
+          - sync_in_pve_guest_records | length == 0
+        fail_msg: "drives selection produced a virtualization plan row"
+
+    - name: Load curated transform variables and defaults
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../roles/sync_in/vars/curated.yml"
+
+    - name: Load curated component defaults
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../roles/sync_in/defaults/main/20_curated.yml"
+
+    - name: Load curated selector fixture
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/curated/selectors.yml"
+        name: sync_in_curated_fixture
+
+    - name: Set the curated selector fixture inputs
+      ansible.builtin.set_fact:
+        sync_in_racks: "{{ sync_in_curated_fixture.sync_in_racks }}"
+        sync_in_devices: "{{ sync_in_curated_fixture.sync_in_devices }}"
+        sync_in_hardware_devices: "{{ sync_in_curated_fixture.sync_in_hardware_devices }}"
+        sync_in_hardware_modules: "{{ sync_in_curated_fixture.sync_in_hardware_modules }}"
+        sync_in_wan_circuits: "{{ sync_in_curated_fixture.sync_in_wan_circuits }}"
+        sync_in_vlans: "{{ sync_in_curated_fixture.sync_in_vlans }}"
+        sync_in_prefixes: "{{ sync_in_curated_fixture.sync_in_prefixes }}"
+        sync_in_reservations: "{{ sync_in_curated_fixture.sync_in_reservations }}"
+        sync_in_curated_snapshot: "{{ sync_in_curated_fixture.sync_in_curated_snapshot }}"
+        sync_in_curated_components: [dcim]
+        sync_in_plan: {}
+
+    - name: Select curated DCIM inputs
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+    - name: Transform and plan only curated DCIM
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+    - name: Build the curated DCIM plan
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_plan.yml"
+
+    - name: Assert DCIM selection excludes hardware and network rows
+      ansible.builtin.assert:
+        that:
+          - sync_in_plan.keys() | list == ['dcim']
+          - >-
+            (sync_in_plan.dcim.create + sync_in_plan.dcim['update'] + sync_in_plan.dcim.delete)
+            | map(attribute='object_kind') | intersect(['module', 'module_type', 'module_bay', 'circuit'])
+            | length == 0
+          - sync_in_curated_module_units | length == 0
+          - sync_in_curated_circuits | length == 0
+        fail_msg: "DCIM selection produced a module, circuit, or network plan row"
+
+    - name: Select curated hardware inputs
+      ansible.builtin.set_fact:
+        sync_in_curated_components: [hardware]
+        sync_in_plan: {}
+
+    - name: Select curated hardware rows
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+    - name: Transform and plan only curated hardware
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+    - name: Build the curated hardware plan
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_plan.yml"
+
+    - name: Assert hardware selection excludes DCIM and network rows
+      ansible.builtin.assert:
+        that:
+          - sync_in_plan.keys() | list == ['hardware']
+          - >-
+            (sync_in_plan.hardware.create + sync_in_plan.hardware['update'] + sync_in_plan.hardware.delete)
+            | map(attribute='object_kind') | intersect(['rack', 'device_interface']) | length == 0
+          - sync_in_curated_racks | length == 0
+          - sync_in_curated_devices | length == 0
+          - sync_in_curated_module_units | length == 1
+          - sync_in_curated_circuits | length == 1
+        fail_msg: "hardware selection produced a rack, BMC interface, or network plan row"
+
+    - name: Verify an unknown Proxmox family fails with its documented message
+      block:
+        - name: Include role validation with an unknown Proxmox family
+          ansible.builtin.include_role:
+            name: sync_in
+            tasks_from: validate_inputs.yml
+          vars:
+            sync_in_stages: []
+            sync_in_pve_components: [unknown]
+
+        - name: Fail if the Proxmox selector was accepted
+          ansible.builtin.fail:
+            msg: "The role accepted an unknown Proxmox family."
+      rescue:
+        - name: Confirm the unknown Proxmox family message
+          ansible.builtin.assert:
+            that:
+              - >-
+                ansible_failed_result.msg ==
+                'sync_in_pve_components holds an unknown family; known families: virtualization, nodes, drives'
+
+    - name: Verify an unknown curated family fails with its documented message
+      block:
+        - name: Include role validation with an unknown curated family
+          ansible.builtin.include_role:
+            name: sync_in
+            tasks_from: validate_inputs.yml
+          vars:
+            sync_in_stages: []
+            sync_in_curated_components: [unknown]
+
+        - name: Fail if the curated selector was accepted
+          ansible.builtin.fail:
+            msg: "The role accepted an unknown curated family."
+      rescue:
+        - name: Confirm the unknown curated family message
+          ansible.builtin.assert:
+            that:
+              - >-
+                ansible_failed_result.msg ==
+                'sync_in_curated_components holds an unknown family; known families: dcim, hardware'
+
+    - name: Verify plan-only accepts only the Nautobot read token
+      ansible.builtin.include_role:
+        name: sync_in
+        tasks_from: validate_inputs.yml
+      vars:
+        sync_in_stages: [proxmox]
+        sync_in_plan_only: true
+        sync_in_nautobot_url: https://nautobot.invalid
+        sync_in_read_token: read-only
+
+    - name: Verify a plain-http Nautobot URL is rejected
+      block:
+        - name: Include role validation with a plain-http Nautobot URL
+          ansible.builtin.include_role:
+            name: sync_in
+            tasks_from: validate_inputs.yml
+          vars:
+            sync_in_stages: [proxmox]
+            sync_in_plan_only: true
+            sync_in_nautobot_url: http://nautobot.invalid
+            sync_in_read_token: read-only
+
+        - name: Fail if a plain-http Nautobot URL was accepted
+          ansible.builtin.fail:
+            msg: "The role accepted a plain-http Nautobot URL."
+      rescue:
+        - name: Confirm the https requirement message
+          ansible.builtin.assert:
+            that:
+              - >-
+                ansible_failed_result.results | map(attribute='msg') | list ==
+                ['sync_in_nautobot_url must be an https URL; http is accepted only for a loopback host.']
+
+    - name: Verify normal synchronization requires the write token
+      block:
+        - name: Include role validation without a write token
+          ansible.builtin.include_role:
+            name: sync_in
+            tasks_from: validate_inputs.yml
+          vars:
+            sync_in_stages: [proxmox]
+            sync_in_plan_only: false
+            sync_in_nautobot_url: https://nautobot.invalid
+            sync_in_read_token: read-only
+
+        - name: Fail if normal synchronization accepts no write token
+          ansible.builtin.fail:
+            msg: "The role accepted normal synchronization without a write token."
+      rescue:
+        - name: Confirm the missing write token message
+          ansible.builtin.assert:
+            that:
+              - >-
+                ansible_failed_result.msg is search(
+                  'sync_in_write_token is also required unless sync_in_plan_only is true'
+                )
+
+    - name: Report selector and plan-only assertions
+      ansible.builtin.debug:
+        msg: "FIXTURE PASS: Proxmox and curated family isolation; selector errors; read-only plan token contract"

@@ -1,0 +1,108 @@
+---
+sync_in_pve_components:
+  - virtualization
+sync_in_pve_node_info:
+  proxmox_nodes:
+    - node: node-a
+      status: online
+      maxmem: 8589934592
+      maxcpu: 8
+sync_in_pve_vm_info:
+  proxmox_vms:
+    - vmid: 701
+      name: legacy-seed
+      node: node-a
+      type: qemu
+      template: false
+      status: stopped
+      maxcpu: 2
+      maxmem: 2147483648
+      maxdisk: 8589934592
+      tags: batch
+      config:
+        scsi0: fast:vm-701-disk-0,size=8G
+        net0: virtio=02:00:00:00:07:01,bridge=br0
+        ipconfig0: ip=192.0.2.81/24
+    - vmid: 702
+      name: new-by-name
+      node: node-a
+      type: qemu
+      template: false
+      status: stopped
+      maxcpu: 1
+      maxmem: 1073741824
+      config:
+        net0: virtio=02:00:00:00:07:02,bridge=br0
+        ipconfig0: ip=192.0.2.82/24
+sync_in_pve_nautobot_snapshot:
+  data:
+    devices: []
+    inventory_items: []
+    virtual_machines:
+      - id: vm-existing
+        name: legacy-seed
+        cluster:
+          id: cluster-a
+          name: node-a
+        role:
+          name: vm
+        status:
+          name: Active
+        vcpus: 1
+        memory: 1024
+        disk: 1
+        tags: []
+        primary_ip4: null
+        custom_field_data:
+          sync_source: ''
+          vmid: 701
+        interfaces:
+          - id: interface-existing
+            name: net0
+            enabled: true
+            mac_address: 02:00:00:00:07:01
+            status:
+              name: Active
+            ip_addresses: []
+            custom_field_data:
+              sync_source: curated
+      - id: vm-same-vmid
+        name: other-name
+        cluster:
+          id: cluster-a
+          name: node-a
+        role:
+          name: vm
+        status:
+          name: Active
+        custom_field_data:
+          sync_source: ''
+          vmid: 702
+        interfaces: []
+    ip_addresses:
+      - id: ip-foreign
+        address: 192.0.2.81/32
+        dns_name: legacy-seed
+        status:
+          name: Reserved
+        custom_field_data:
+          sync_source: curated
+    prefixes:
+      - prefix: 192.0.2.0/24
+        namespace:
+          name: Global
+    clusters:
+      - id: cluster-a
+        name: node-a
+        custom_field_data:
+          sync_source: proxmox
+    statuses:
+      - id: status-active
+        name: Active
+    roles:
+      - id: role-vm
+        name: vm
+    tags: []
+    cluster_types: []
+    manufacturers: []
+    device_types: []

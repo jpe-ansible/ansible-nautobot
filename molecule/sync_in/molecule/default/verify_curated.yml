@@ -1,0 +1,226 @@
+---
+- name: Verify curated sync transforms
+  hosts: all
+  gather_facts: false
+  vars:
+    sync_in_curated_components:
+      - dcim
+      - hardware
+
+  tasks:
+    - name: Load sync_in Proxmox defaults
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../roles/sync_in/defaults/main/10_proxmox.yml"
+
+    - name: Load shared sync_in variables
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../roles/sync_in/vars/main.yml"
+
+    - name: Load curated transform rules
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../roles/sync_in/vars/curated.yml"
+
+    - name: Load quantity expansion fixture
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/curated/quantity_3.yml"
+        name: sync_in_curated_fixture
+
+    - name: Set quantity fixture inputs
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/set_inputs.yml"
+
+    - name: Select the input rows for quantity expansion fixture
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+    - name: Transform quantity expansion fixture
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+    - name: Set a Nautobot URL with a trailing slash
+      ansible.builtin.set_fact:
+        sync_in_nautobot_url: https://nautobot.example/
+
+    - name: Assert quantity three expands and the curated Module URL is normalized
+      ansible.builtin.assert:
+        that:
+          - >-
+            sync_in_curated_module_units | map(attribute='asset_tag') | list
+            == ['RAM-PAIR#1', 'RAM-PAIR#2', 'RAM-PAIR#3']
+          - sync_in_curated_missing_manufacturers == ['Example']
+          - sync_in_curated_missing_roles == []
+          - sync_in_curated_module_api_url == 'https://nautobot.example/api/dcim/modules/'
+        fail_msg: >-
+          quantity three expansion or curated Module URI normalization failed:
+          {{ sync_in_curated_module_units | map(attribute='asset_tag') | list }}
+          {{ sync_in_curated_module_api_url }}
+        success_msg: "quantity_3_expansion_and_module_uri: passed"
+
+    - name: Load quantity reconciliation fixture
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/curated/quantity_1.yml"
+        name: sync_in_curated_fixture
+
+    - name: Set quantity reconciliation inputs
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/set_inputs.yml"
+
+    - name: Select the input rows for quantity reconciliation fixture
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+    - name: Transform quantity reconciliation fixture
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+    - name: Assert quantity one adopts its first unit and deletes surplus units
+      ansible.builtin.assert:
+        that:
+          - sync_in_curated_module_units | map(attribute='asset_tag') | list == ['RAM-DROP']
+          - sync_in_curated_module_rows[0].sync_in_curated_adopt_from == 'RAM-DROP#1'
+          - sync_in_curated_module_rows[0].sync_in_curated_adopt_to == 'RAM-DROP'
+          - sync_in_curated_modules_to_delete | map(attribute='asset_tag') | list | sort == ['RAM-DROP#2', 'RAM-DROP#3']
+          - sync_in_curated_missing_manufacturers == []
+        fail_msg: >-
+          quantity reduction did not preserve the first unit and select only
+          the two surplus modules: {{ sync_in_curated_modules_to_delete }}
+        success_msg: "quantity_3_to_1_reconciliation: passed"
+
+    - name: Load discovered drive fixture
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/curated/drive_discovered.yml"
+        name: sync_in_curated_fixture
+
+    - name: Set discovered drive fixture inputs
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/set_inputs.yml"
+
+    - name: Select the input rows for discovered drive fixture
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+    - name: Transform discovered drive fixture
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+    - name: Assert discovered drives suppress curated modules
+      ansible.builtin.assert:
+        that:
+          - sync_in_curated_module_rows[0].sync_in_curated_drive_suppressed
+          - sync_in_curated_module_units | length == 0
+          - sync_in_curated_modules_to_delete | map(attribute='asset_tag') | list == ['SSD-ROW#1']
+        fail_msg: "a discovered drive still has a curated module target"
+        success_msg: "discovered_drive_suppression: passed"
+
+    - name: Load uncovered drive fixture
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/curated/drive_uncovered.yml"
+        name: sync_in_curated_fixture
+
+    - name: Set uncovered drive fixture inputs
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/set_inputs.yml"
+
+    - name: Select the input rows for uncovered drive fixture
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+    - name: Transform uncovered drive fixture
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+    - name: Assert uncovered drive rows remain curated modules
+      ansible.builtin.assert:
+        that:
+          - not sync_in_curated_module_rows[0].sync_in_curated_drive_suppressed
+          - sync_in_curated_module_units | map(attribute='asset_tag') | list == ['HDD-ROW']
+        fail_msg: "a drive row without discovered inventory was suppressed"
+        success_msg: "uncovered_drive_retained: passed"
+
+    - name: Load field normalization fixture
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/curated/fields.yml"
+        name: sync_in_curated_fixture
+
+    - name: Set field normalization fixture inputs
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/set_inputs.yml"
+
+    - name: Select the input rows for field normalization fixture
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+    - name: Transform field normalization fixture
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+    - name: Assert serial omission procurement normalization and circuit truncation
+      ansible.builtin.assert:
+        that:
+          - sync_in_curated_hardware_devices[0].sync_in_curated_serial == ''
+          - sync_in_curated_hardware_devices[0].sync_in_curated_custom_fields.purchase_date == '2024-10-01'
+          - sync_in_curated_hardware_devices[0].sync_in_curated_custom_fields.purchase_price_cents == 123456
+          - sync_in_curated_hardware_devices[0].sync_in_curated_custom_fields.preserve_me == 'existing'
+          - sync_in_curated_hardware_devices[0].sync_in_curated_custom_fields.sync_source == 'curated'
+          - sync_in_curated_circuits[0].description | length == 200
+          - sync_in_curated_missing_manufacturers == ['Example']
+          - sync_in_curated_missing_roles == ['hardware']
+        fail_msg: >-
+          serial, procurement, field merge, or circuit description normalization
+          did not match the curated contract
+        success_msg: "serial_date_price_and_circuit_fields: passed"
+
+    - name: Load module bay position fixture
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/curated/module_bay_positions.yml"
+        name: sync_in_curated_fixture
+
+    - name: Set module bay position fixture inputs
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/set_inputs.yml"
+
+    - name: Select the input rows for module bay position fixture
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+    - name: Transform module bay position fixture
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+    - name: Save and recalculate module bay positions
+      ansible.builtin.set_fact:
+        sync_in_curated_first_positions: "{{ sync_in_curated_module_bays | map(attribute='position') | list }}"
+
+    - name: Select the input rows for module bay position fixture a second time
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+    - name: Transform module bay position fixture a second time
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+    - name: Assert module bay positions are stable and unique
+      ansible.builtin.assert:
+        that:
+          - sync_in_curated_first_positions == sync_in_curated_module_bays | map(attribute='position') | list
+          - >-
+            sync_in_curated_module_bays | map(attribute='position') | list | unique | length
+            == sync_in_curated_module_bays | length
+          - >-
+            sync_in_curated_module_bays | map(attribute='position') | list
+            == ['curated:MODULE-A#1', 'curated:MODULE-A#2', 'curated:MODULE-A#3',
+                'curated:MODULE-B#1', 'curated:MODULE-B#2']
+        fail_msg: "module bay positions were unstable or duplicated"
+        success_msg: "module_bay_positions: passed"
+
+    - name: Load invalid module id fixture
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/fixtures/curated/invalid_module_id.yml"
+        name: sync_in_curated_fixture
+
+    - name: Set invalid module id fixture inputs
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/set_inputs.yml"
+
+    - name: Assert malformed module id is rejected with the stable message
+      block:
+        - name: Select the input rows for malformed module id fixture
+          ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_select.yml"
+
+        - name: Transform malformed module id fixture
+          ansible.builtin.include_tasks: "{{ playbook_dir }}/../../../../roles/sync_in/tasks/curated_transform.yml"
+
+        - name: Fail when malformed module id reaches a completed transform
+          ansible.builtin.fail:
+            msg: "curated transform accepted an empty hw_id"
+      rescue:
+        - name: Confirm the malformed module id failure message
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg == 'sync_in curated hardware_modules rows must include a non-empty hw_id.'
+            fail_msg: >-
+              Expected the stable invalid-hw_id message, got:
+              {{ ansible_failed_result.msg | default('(no message)') }}
+            success_msg: "invalid_module_id_message: passed"
+
+    - name: Verify curated ownership and field edge cases
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/fixtures/curated/verify_gaps.yml"

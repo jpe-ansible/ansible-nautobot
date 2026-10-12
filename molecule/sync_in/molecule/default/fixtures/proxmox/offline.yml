@@ -1,0 +1,6 @@
+---
+sync_in_pve_node_info:
+  proxmox_nodes:
+    - node: node-a
+      status: offline
+      maxmem: 8589934592

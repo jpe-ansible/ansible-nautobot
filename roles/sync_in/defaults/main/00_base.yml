@@ -1,0 +1,8 @@
+---
+# Stages run in this order; each stage reads Nautobot state before it writes.
+sync_in_known_stages:
+  - bootstrap
+  - proxmox
+  - curated
+sync_in_stages: "{{ sync_in_known_stages }}"
+sync_in_plan_only: false

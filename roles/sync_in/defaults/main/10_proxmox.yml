@@ -1,0 +1,18 @@
+---
+sync_in_prune_max_fraction: 0.25
+sync_in_prune_min_allowance: 1
+sync_in_pve_components:
+  - virtualization
+  - nodes
+  - drives
+sync_in_pve_node_map: []
+sync_in_pve_api_port_default: 8006
+sync_in_pve_api_timeout: 30
+sync_in_pve_namespace_name: Global
+sync_in_pve_status_name: Active
+sync_in_pve_node_role_name: pve-node
+sync_in_pve_vm_role_name: vm
+sync_in_pve_device_type_model: pve-node
+sync_in_pve_manufacturer_name: Generic
+sync_in_pve_cluster_type_name: Proxmox
+sync_in_pve_location_name: homelab

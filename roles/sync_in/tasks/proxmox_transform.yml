@@ -1,0 +1,215 @@
+---
+- name: Reset the Proxmox transform guard
+  ansible.builtin.set_fact:
+    sync_in_pve_transform_passed: false
+
+- name: Report why a Proxmox read returned an error
+  ansible.builtin.debug:
+    msg: "Proxmox {{ item.name }} read error: {{ item.result.msg }}"
+  loop:
+    - {name: nodes, result: "{{ sync_in_pve_node_info }}"}
+    - {name: guests, result: "{{ sync_in_pve_vm_info }}"}
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.result.msg is defined
+
+- name: Report why a Proxmox disk read returned an error
+  ansible.builtin.debug:
+    msg: >-
+      Proxmox disk read error on {{ item.item.node }}:
+      {{ item.msg | default(item.status | default('no response')) }}
+  loop: "{{ sync_in_pve_disk_results.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.node }}"
+  when: item.status | default(0) != 200
+
+- name: Reject an empty or offline Proxmox node list
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_node_info.proxmox_nodes is defined
+      - sync_in_pve_node_info.proxmox_nodes | length > 0
+      - >-
+        sync_in_pve_node_info.proxmox_nodes | selectattr('node', 'defined') | list | length
+        == sync_in_pve_node_info.proxmox_nodes | length
+      - >-
+        sync_in_pve_node_info.proxmox_nodes | selectattr('maxmem', 'defined') | list | length
+        == sync_in_pve_node_info.proxmox_nodes | length
+      - >-
+        sync_in_pve_node_info.proxmox_nodes | selectattr('maxmem', 'gt', 0) | list | length
+        == sync_in_pve_node_info.proxmox_nodes | length
+      - >-
+        sync_in_pve_node_info.proxmox_nodes
+        | selectattr('status', 'equalto', 'online') | list | length
+        == sync_in_pve_node_info.proxmox_nodes | length
+      - >-
+        sync_in_pve_node_info.proxmox_nodes | map(attribute='node') | unique | list | length
+        == sync_in_pve_node_info.proxmox_nodes | length
+    fail_msg: "Proxmox read incomplete: <nodes>"
+
+- name: Reject failed or incomplete Proxmox disk responses
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_disk_results.results is defined
+      - sync_in_pve_disk_results.results | length == sync_in_pve_node_info.proxmox_nodes | length
+      - >-
+        sync_in_pve_disk_results.results | selectattr('status', 'equalto', 200)
+        | list | length == sync_in_pve_node_info.proxmox_nodes | length
+      - >-
+        sync_in_pve_disk_results.results | selectattr('json.data', 'defined')
+        | list | length == sync_in_pve_node_info.proxmox_nodes | length
+      - >-
+        sync_in_pve_disk_results.results | map(attribute='item.node') | unique | list | length
+        == sync_in_pve_node_info.proxmox_nodes | length
+    fail_msg: "Proxmox read incomplete: <disks>"
+  when: "'drives' in sync_in_pve_components"
+
+- name: Reject an empty disk list from any Proxmox node
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_disk_results.results | map(attribute='json.data') | map('length') | min > 0
+    fail_msg: "Proxmox read incomplete: <disks>"
+  when: "'drives' in sync_in_pve_components"
+
+- name: Reject incomplete Proxmox guest results
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_vm_info.proxmox_vms is defined
+      - >-
+        sync_in_pve_vm_info.proxmox_vms | selectattr('name', 'defined')
+        | rejectattr('name', 'equalto', '') | list | length
+        == sync_in_pve_vm_info.proxmox_vms | length
+      - >-
+        sync_in_pve_vm_info.proxmox_vms | selectattr('vmid', 'defined') | list | length
+        == sync_in_pve_vm_info.proxmox_vms | length
+      - >-
+        sync_in_pve_vm_info.proxmox_vms | selectattr('node', 'defined') | list | length
+        == sync_in_pve_vm_info.proxmox_vms | length
+      - >-
+        sync_in_pve_vm_info.proxmox_vms | selectattr('config', 'defined') | list | length
+        == sync_in_pve_vm_info.proxmox_vms | length
+      - >-
+        sync_in_pve_vm_info.proxmox_vms | rejectattr('template', 'equalto', true)
+        | selectattr('type', 'defined') | selectattr('type', 'in', ['qemu', 'lxc'])
+        | list | length
+        == sync_in_pve_vm_info.proxmox_vms | rejectattr('template', 'equalto', true) | list | length
+      - >-
+        sync_in_pve_vm_info.proxmox_vms | selectattr('maxmem', 'defined') | list | length
+        == sync_in_pve_vm_info.proxmox_vms | length
+      - >-
+        sync_in_pve_vm_info.proxmox_vms | selectattr('maxcpu', 'defined') | list | length
+        == sync_in_pve_vm_info.proxmox_vms | length
+      - >-
+        sync_in_pve_vm_info.proxmox_vms | rejectattr('node', 'in', sync_in_pve_node_names)
+        | list | length == 0
+      - >-
+        sync_in_pve_vm_info.proxmox_vms | map(attribute='vmid') | unique | list | length
+        == sync_in_pve_vm_info.proxmox_vms | length
+    fail_msg: "Proxmox read incomplete: <cluster>"
+  when: "'virtualization' in sync_in_pve_components"
+
+- name: Reject an incomplete Nautobot ownership snapshot
+  ansible.builtin.assert:
+    that:
+      - "'nodes' not in sync_in_pve_components or sync_in_pve_nautobot_snapshot.data.devices is defined"
+      - "'nodes' not in sync_in_pve_components or sync_in_pve_nautobot_snapshot.data.clusters is defined"
+      - "'nodes' not in sync_in_pve_components or sync_in_pve_nautobot_snapshot.data.ip_addresses is defined"
+      - >-
+        'nodes' not in sync_in_pve_components
+        or sync_in_pve_nautobot_snapshot.data.devices | selectattr('interfaces', 'defined') | list | length
+        == sync_in_pve_nautobot_snapshot.data.devices | length
+      - >-
+        'nodes' not in sync_in_pve_components
+        or sync_in_pve_nautobot_snapshot.data.devices | selectattr('primary_ip4', 'defined') | list | length
+        == sync_in_pve_nautobot_snapshot.data.devices | length
+      - >-
+        'nodes' not in sync_in_pve_components
+        or sync_in_pve_nautobot_snapshot.data.ip_addresses | selectattr('dns_name', 'defined') | list | length
+        == sync_in_pve_nautobot_snapshot.data.ip_addresses | length
+      - >-
+        'nodes' not in sync_in_pve_components
+        or sync_in_pve_nautobot_snapshot.data.ip_addresses | selectattr('interfaces', 'defined') | list | length
+        == sync_in_pve_nautobot_snapshot.data.ip_addresses | length
+      - "'drives' not in sync_in_pve_components or sync_in_pve_nautobot_snapshot.data.inventory_items is defined"
+      - >-
+        'virtualization' not in sync_in_pve_components
+        or sync_in_pve_nautobot_snapshot.data.virtual_machines is defined
+      - >-
+        'virtualization' not in sync_in_pve_components
+        or sync_in_pve_nautobot_snapshot.data.ip_addresses is defined
+      - >-
+        'virtualization' not in sync_in_pve_components
+        or sync_in_pve_nautobot_snapshot.data.prefixes is defined
+      - >-
+        sync_in_pve_nautobot_snapshot.data.virtual_machines
+        | selectattr('interfaces', 'defined') | list | length
+        == sync_in_pve_nautobot_snapshot.data.virtual_machines | length
+      - >-
+        ('nodes' not in sync_in_pve_components and 'virtualization' not in sync_in_pve_components)
+        or sync_in_pve_nautobot_snapshot.data.statuses is defined
+      - "'nodes' not in sync_in_pve_components or sync_in_pve_nautobot_snapshot.data.roles is defined"
+      - >-
+        'virtualization' not in sync_in_pve_components or sync_in_pve_nautobot_snapshot.data.tags is defined
+      - "'nodes' not in sync_in_pve_components or sync_in_pve_nautobot_snapshot.data.cluster_types is defined"
+      - >-
+        ('nodes' not in sync_in_pve_components and 'drives' not in sync_in_pve_components)
+        or sync_in_pve_nautobot_snapshot.data.manufacturers is defined
+      - "'nodes' not in sync_in_pve_components or sync_in_pve_nautobot_snapshot.data.device_types is defined"
+    fail_msg: "Nautobot read incomplete: <objects>"
+
+- name: Reject duplicate resolved Proxmox node Device names
+  ansible.builtin.assert:
+    that:
+      - >-
+        sync_in_pve_node_mapping_records | map(attribute='name') | list | unique | length
+        == sync_in_pve_node_mapping_records | length
+    fail_msg: "Proxmox node mapping has duplicate Nautobot Device names"
+    quiet: true
+  when: "'nodes' in sync_in_pve_components"
+
+- name: Reject ambiguous or cross-cluster VM adoption
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_vm_adoption_errors | length == 0
+    fail_msg: "{{ sync_in_pve_vm_adoption_errors | first | default('Invalid VM adoption') }}"
+    quiet: true
+  when: "'virtualization' in sync_in_pve_components"
+
+- name: Reject all-missing Proxmox node management reservations
+  ansible.builtin.assert:
+    that:
+      - >-
+        sync_in_pve_node_records | length == 0
+        or sync_in_pve_node_unbound_nodes | length < sync_in_pve_node_records | length
+    fail_msg: >-
+      Proxmox node management binding failed: reservations missing for all
+      {{ sync_in_pve_node_unbound_nodes | length }} commissioned nodes
+    quiet: true
+  when: "'nodes' in sync_in_pve_components"
+
+- name: Reject a disk response without an identifiable non-USB drive
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_drive_records | length > 0
+    fail_msg: "Proxmox read incomplete: <disks>"
+  when: "'drives' in sync_in_pve_components"
+
+- name: Reject a family prune plan above the configured safety fraction
+  ansible.builtin.assert:
+    that:
+      - sync_in_prune_max_fraction | float > 0
+      - sync_in_prune_max_fraction | float <= 1
+      - >-
+        sync_in_pve_family_owned_counts[item] | int == 0
+        or sync_in_pve_family_prune_counts[item] | int <= sync_in_prune_min_allowance | int
+        or sync_in_pve_family_prune_counts[item] | float / sync_in_pve_family_owned_counts[item] | float
+        <= sync_in_prune_max_fraction | float
+    fail_msg: >-
+      Proxmox prune exceeds sync_in_prune_max_fraction for {{ item }}; count exceeds
+      sync_in_prune_min_allowance ({{ sync_in_prune_min_allowance }})
+  loop: "{{ sync_in_pve_components }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Mark the Proxmox transformation as validated
+  ansible.builtin.set_fact:
+    sync_in_pve_transform_passed: true

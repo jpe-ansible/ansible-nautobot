@@ -1,0 +1,8 @@
+---
+sync_in_bootstrap_repo_name: Nautobot Bootstrap
+sync_in_bootstrap_job_name: Bootstrap to Nautobot
+sync_in_bootstrap_source_branch: >-
+  {{ (lookup('ansible.builtin.file', role_path ~ '/../../develop.yml') | from_yaml).git_repository
+     | selectattr('name', 'equalto', 'default') | map(attribute='branch') | first }}
+sync_in_bootstrap_branch: "{{ sync_in_bootstrap_source_branch }}"
+sync_in_bootstrap_timeout: 600

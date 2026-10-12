@@ -1,0 +1,72 @@
+---
+sync_in_pve_node_info:
+  proxmox_nodes:
+    - node: node-a
+      status: online
+      maxmem: 8589934592
+      maxcpu: 8
+sync_in_pve_vm_info:
+  proxmox_vms:
+    - vmid: 101
+      name: guest-a
+      node: node-a
+      type: qemu
+      template: false
+      status: stopped
+      maxcpu: 2
+      maxmem: 4294967296
+      maxdisk: 21474836480
+      tags: app; test
+      config:
+        scsi0: fast:vm-101-disk-0,size=32G
+        net0: virtio=02:00:00:00:00:01,bridge=br0,tag=10
+        ipconfig0: ip=192.0.2.10/24,gw=192.0.2.1
+sync_in_pve_disk_results:
+  results:
+    - item:
+        node: node-a
+      status: 200
+      json:
+        data:
+          - type: hdd
+            serial: "0xAbCd1234"
+            wwn: "0x5000000000000001"
+            model: "123_ACME_1000"
+            vendor: unknown
+            devpath: /dev/sda
+            size: 1000000000000
+            used: LVM
+          - type: USB
+            serial: usb-serial
+            model: removable
+          - type: ssd
+            serial: "0x5000000000000002"
+            wwn: "5000000000000002"
+            model: Vendor_5000
+            vendor: Generic
+            devpath: /dev/sdb
+            size: 2000000000000
+            used: LVM
+sync_in_pve_nautobot_snapshot:
+  data:
+    devices: []
+    inventory_items: []
+    virtual_machines: []
+    ip_addresses:
+      - id: node-reservation
+        address: 192.0.2.99/32
+        dns_name: node-a
+        interfaces: []
+        custom_field_data:
+          sync_source: curated
+    prefixes:
+      - prefix: 192.0.2.0/24
+        namespace:
+          name: Global
+    clusters: []
+    statuses: []
+    roles: []
+    tags: []
+    cluster_types: []
+    manufacturers: []
+    device_types: []

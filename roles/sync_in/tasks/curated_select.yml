@@ -1,0 +1,20 @@
+---
+- name: Select curated input rows by family
+  ansible.builtin.set_fact:
+    sync_in_curated_input_racks: "{{ sync_in_racks if 'dcim' in sync_in_curated_components else [] }}"
+    sync_in_curated_input_devices: "{{ sync_in_devices if 'dcim' in sync_in_curated_components else [] }}"
+    sync_in_curated_input_hardware_devices: >-
+      {{ sync_in_hardware_devices if 'hardware' in sync_in_curated_components else [] }}
+    sync_in_curated_input_hardware_modules: >-
+      {{ sync_in_hardware_modules if 'hardware' in sync_in_curated_components else [] }}
+    sync_in_curated_input_wan_circuits: >-
+      {{ sync_in_wan_circuits if 'hardware' in sync_in_curated_components else [] }}
+    sync_in_curated_input_vlans: >-
+      {{ sync_in_vlans if 'dcim' in sync_in_curated_components
+         and 'hardware' in sync_in_curated_components else [] }}
+    sync_in_curated_input_prefixes: >-
+      {{ sync_in_prefixes if 'dcim' in sync_in_curated_components
+         and 'hardware' in sync_in_curated_components else [] }}
+    sync_in_curated_input_reservations: >-
+      {{ sync_in_reservations if 'dcim' in sync_in_curated_components
+         and 'hardware' in sync_in_curated_components else [] }}

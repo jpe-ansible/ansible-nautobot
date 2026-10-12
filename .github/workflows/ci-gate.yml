@@ -23,6 +23,12 @@ jobs:
     with:
       molecule: false
       molecule_scenario_filters: |
+        sync_in:
+          - 'roles/sync_in/**'
+          - 'roles/url_guard/**'
+          - 'molecule/sync_in/**'
+          - 'global_settings.yml'
+          - 'develop.yml'
         sync_out:
           - 'roles/sync_out/**'
           - 'roles/url_guard/**'

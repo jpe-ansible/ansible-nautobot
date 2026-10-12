@@ -1,0 +1,55 @@
+---
+- name: Load Proxmox mapping and transformation rules
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/vars/proxmox.yml"
+
+- name: Validate Proxmox and Nautobot credentials and endpoints
+  ansible.builtin.assert:
+    that:
+      - sync_in_pve_api_scheme == 'https'
+      - sync_in_pve_api_path in ['', '/']
+      - sync_in_pve_api_host | length > 0
+      - sync_in_pve_token_id is defined
+      - sync_in_pve_token_id is match(sync_in_pve_token_id_regex)
+      - sync_in_pve_token_secret is defined
+      - sync_in_pve_ca_path is defined
+      - sync_in_nautobot_url is defined
+      - sync_in_read_token is defined
+      - sync_in_plan_only or sync_in_write_token is defined
+    fail_msg: "Proxmox and Nautobot endpoint inputs are incomplete"
+    quiet: true
+  when: sync_in_pve_components | length > 0
+
+- name: Read Proxmox and Nautobot source data
+  ansible.builtin.include_tasks: proxmox_fetch.yml
+  when: sync_in_pve_components | length > 0
+
+- name: Validate and transform the fetched records
+  ansible.builtin.include_tasks: proxmox_transform.yml
+  when: sync_in_pve_components | length > 0
+
+- name: Build the Proxmox synchronization plan
+  ansible.builtin.include_tasks: proxmox_plan.yml
+  when: sync_in_pve_components | length > 0
+
+- name: Apply current Proxmox records to Nautobot
+  ansible.builtin.include_tasks: proxmox_apply.yml
+  when:
+    - sync_in_pve_components | length > 0
+    - sync_in_pve_transform_passed | default(false)
+    - not sync_in_plan_only
+    - not ansible_check_mode
+
+- name: Prune stale flow-owned Nautobot records
+  ansible.builtin.include_tasks: proxmox_prune.yml
+  when:
+    - sync_in_pve_components | length > 0
+    - sync_in_pve_transform_passed | default(false)
+    - not sync_in_plan_only
+    - not ansible_check_mode
+
+- name: Read back persisted Proxmox drive inventory
+  ansible.builtin.include_tasks: proxmox_drive_readback.yml
+  when:
+    - "'drives' in sync_in_pve_components"
+    - sync_in_pve_transform_passed | default(false)

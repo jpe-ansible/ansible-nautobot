@@ -1,0 +1,108 @@
+---
+sync_in_pve_vm_info:
+  proxmox_vms:
+    - vmid: 201
+      name: qemu-stopped
+      node: node-a
+      type: qemu
+      template: false
+      status: stopped
+      maxcpu: 2
+      maxmem: 4294967296
+      config:
+        net10: virtio=02:00:00:00:01:10,bridge=br10
+        ipconfig10: ip=198.51.100.10/24,gw=198.51.100.1
+        net2: virtio=02:00:00:00:01:02,bridge=br2
+        ipconfig2: ip=203.0.113.30/24,gw=203.0.113.1
+        net0: virtio=02:00:00:00:01:00,bridge=br0
+        ipconfig0: ip=192.0.2.10/24,gw=192.0.2.1
+    - vmid: 202
+      name: lxc-stopped
+      node: node-a
+      type: lxc
+      template: false
+      status: stopped
+      maxcpu: 1
+      maxmem: 1073741824
+      config:
+        net0: name=eth0,bridge=br0,hwaddr=02:00:00:00:02:00,ip=198.51.100.11/24,gw=198.51.100.1,type=veth
+        net1: name=eth1,bridge=br0,hwaddr=02:00:00:00:02:01,ip=manual,type=veth
+        net2: name=eth2,bridge=br0,hwaddr=02:00:00:00:02:02,type=veth
+    - vmid: 203
+      name: dhcp-guest
+      node: node-a
+      type: qemu
+      template: false
+      status: running
+      maxcpu: 1
+      maxmem: 1073741824
+      config:
+        net0: virtio=02:00:00:00:03:00,bridge=br0
+        ipconfig0: ip=dhcp
+    - vmid: 204
+      name: template-guest
+      node: node-a
+      type: qemu
+      template: true
+      status: stopped
+      maxcpu: 1
+      maxmem: 1073741824
+      config:
+        net0: virtio=02:00:00:00:04:00,bridge=br0
+        ipconfig0: ip=192.0.2.40/24
+    - vmid: 205
+      name: outside-prefix
+      node: node-a
+      type: qemu
+      template: false
+      status: stopped
+      maxcpu: 1
+      maxmem: 1073741824
+      config:
+        net0: virtio=02:00:00:00:05:00,bridge=br0
+        ipconfig0: ip=203.0.113.20/24
+    - vmid: 206
+      name: plain-qemu
+      node: node-a
+      type: qemu
+      template: false
+      status: running
+      maxcpu: 1
+      maxmem: 1073741824
+      config:
+        net0: virtio=02:00:00:00:06:00,bridge=br0,firewall=1
+sync_in_pve_nautobot_snapshot:
+  data:
+    devices: []
+    inventory_items: []
+    virtual_machines: []
+    ip_addresses:
+      - id: ip-curated
+        address: 198.51.100.11/32
+        dns_name: guest-reservation
+        interfaces: []
+        custom_field_data:
+          sync_source: curated
+      - id: node-reservation
+        address: 192.0.2.99/32
+        dns_name: node-a
+        interfaces: []
+        custom_field_data:
+          sync_source: curated
+    prefixes:
+      - prefix: 192.0.2.0/24
+        namespace:
+          name: Global
+      - prefix: 198.51.100.0/24
+        namespace:
+          name: Global
+      - prefix: 203.0.113.0/24
+        namespace:
+          name: Other
+    clusters: []
+    statuses: []
+    roles: []
+    tags: []
+    cluster_types: []
+    manufacturers: []
+    device_types: []
