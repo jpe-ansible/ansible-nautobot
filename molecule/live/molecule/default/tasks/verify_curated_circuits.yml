@@ -1,0 +1,44 @@
+---
+- name: Read the curated circuit through GraphQL
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/graphql/"
+    method: POST
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      query: |
+        query {
+          circuits {
+            cid status { name } provider { name } circuit_type { name }
+            custom_field_data: _custom_field_data
+          }
+        }
+    status_code: 200
+    return_content: true
+  register: live_curated_circuit_graphql
+  no_log: true
+
+- name: Assert the curated circuit uses its provider, type and status
+  ansible.builtin.assert:
+    that:
+      - live_curated_circuit_graphql.json.errors | default([]) | length == 0
+      - >-
+        live_curated_circuit_graphql.json.data.circuits
+        | selectattr('cid', 'equalto', 'WAN-LIVE-CURATED') | list | length == 1
+      - >-
+        (live_curated_circuit_graphql.json.data.circuits
+         | selectattr('cid', 'equalto', 'WAN-LIVE-CURATED') | first).provider.name
+        == 'Example Transit Provider'
+      - >-
+        (live_curated_circuit_graphql.json.data.circuits
+         | selectattr('cid', 'equalto', 'WAN-LIVE-CURATED') | first).circuit_type.name == 'Internet'
+      - >-
+        (live_curated_circuit_graphql.json.data.circuits
+         | selectattr('cid', 'equalto', 'WAN-LIVE-CURATED') | first).status.name == 'Active'
+      - >-
+        (live_curated_circuit_graphql.json.data.circuits
+         | selectattr('cid', 'equalto', 'WAN-LIVE-CURATED') | first).custom_field_data.sync_source == 'curated'
+    fail_msg: >-
+      The curated circuit provider, type, status, or ownership marker did not match its input.

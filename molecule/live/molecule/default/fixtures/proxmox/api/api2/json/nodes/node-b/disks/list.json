@@ -1,0 +1,1 @@
+{"data":[{"type":"ssd","serial":"TEST-NODE-B-01","wwn":"5000000000000003","model":"Example SSD","vendor":"Example","devpath":"/dev/sda","size":1000000000,"used":"LVM"},{"type":"hdd","serial":"TEST-NODE-B-02","wwn":"5000000000000004","model":"Example Disk","vendor":"Example","devpath":"/dev/sdb","size":2000000000,"used":"LVM"}]}

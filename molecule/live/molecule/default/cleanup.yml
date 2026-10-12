@@ -1,0 +1,9 @@
+---
+- name: Leave exact-resource removal to the scenario destroy play
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Record that cleanup is handled by the exact-name destroy play
+      ansible.builtin.debug:
+        msg: "The destroy play removes this scenario's labeled containers, network and state directory."

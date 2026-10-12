@@ -1,0 +1,201 @@
+---
+- name: Derive the passing desired placement from the fetched live guests
+  ansible.builtin.set_fact:
+    live_preflight_desired_guests: >-
+      {%- set desired = {} -%}
+      {%- for guest in preflight_nautobot_guests -%}
+      {%-   set disks = [] -%}
+      {%-   for disk in guest.live_disks -%}
+      {%-     set _ = disks.append({
+              'interface': disk.interface,
+              'datastore_id': disk.datastore
+            }) -%}
+      {%-   endfor -%}
+      {%-   set _ = desired.update({
+              guest.name: {
+                'node': guest.current_node,
+                'memory_mb': guest.memory_mb,
+                'disks': disks
+              }
+            }) -%}
+      {%- endfor -%}
+      {{ desired }}
+
+- name: Run the pre-flight role against live inventory and matching intent
+  ansible.builtin.include_role:
+    name: preflight
+    tasks_from: main.yml
+  vars:
+    preflight_nautobot_url: "{{ live_nautobot_url }}"
+    preflight_read_token: "{{ live_service_account_values.pipeline.token }}"
+    preflight_desired_guests: "{{ live_preflight_desired_guests }}"
+  no_log: true
+
+- name: Assert the live desired placement passes pre-flight
+  ansible.builtin.assert:
+    that:
+      - preflight_data_failures | length == 0
+      - preflight_policy_failures | length == 0
+    fail_msg: The matching live guest placement did not pass pre-flight.
+
+- name: Select a live guest, its node capacity and its first disk
+  ansible.builtin.set_fact:
+    live_preflight_target_name: guest-1
+    live_preflight_target_guest: "{{ live_preflight_desired_guests['guest-1'] }}"
+    live_preflight_target_device: >-
+      {{ preflight_nautobot_devices
+         | selectattr('name', 'equalto', live_preflight_desired_guests['guest-1'].node)
+         | first }}
+    live_preflight_target_live_guest: >-
+      {{ preflight_nautobot_guests
+         | selectattr('name', 'equalto', 'guest-1') | first }}
+    live_preflight_wrong_pool_id: live-deliberately-wrong-pool
+    live_preflight_missing_interface: missing-live-interface
+
+- name: Build the over-capacity, wrong-pool and missing-interface inputs
+  ansible.builtin.set_fact:
+    live_preflight_capacity_mb: "{{ live_preflight_target_device.cf_physical_ram_mb | int }}"
+    live_preflight_over_ram_total_mb: >-
+      {{ (live_preflight_target_device.cf_physical_ram_mb | int) + 1
+         + (live_preflight_desired_guests | dict2items
+            | rejectattr('key', 'equalto', 'guest-1')
+            | selectattr('value.node', 'equalto', live_preflight_target_guest.node)
+            | map(attribute='value.memory_mb') | sum) }}
+    live_preflight_wrong_pool_interface: "{{ live_preflight_target_live_guest.live_disks[0].interface }}"
+    live_preflight_live_datastore: "{{ live_preflight_target_live_guest.live_disks[0].datastore }}"
+    live_preflight_over_ram_desired: >-
+      {{ live_preflight_desired_guests
+         | combine({
+             'guest-1': live_preflight_target_guest
+               | combine({'memory_mb': (live_preflight_target_device.cf_physical_ram_mb | int) + 1})
+           }) }}
+    live_preflight_wrong_pool_desired: >-
+      {{ live_preflight_desired_guests
+         | combine({
+             'guest-1': live_preflight_target_guest
+               | combine({
+                   'disks': [{
+                     'interface': live_preflight_target_live_guest.live_disks[0].interface,
+                     'datastore_id': live_preflight_wrong_pool_id
+                   }]
+                 })
+           }) }}
+    live_preflight_missing_interface_desired: >-
+      {{ live_preflight_desired_guests
+         | combine({
+             'guest-1': live_preflight_target_guest
+               | combine({
+                   'disks': [{
+                     'interface': live_preflight_missing_interface,
+                     'datastore_id': live_preflight_target_live_guest.live_disks[0].datastore
+                   }]
+                 })
+           }) }}
+
+- name: Set exact expected failures for the live pre-flight negatives
+  ansible.builtin.set_fact:
+    live_preflight_expected_ram_failure: >-
+      RAM preflight failed for {{ live_preflight_target_guest.node }} (desired placement):
+      {{ live_preflight_over_ram_total_mb }} MiB allocated exceeds {{ live_preflight_capacity_mb }} MiB physical
+    live_preflight_expected_wrong_pool_failure: >-
+      Storage-pool preflight failed for guest-1/{{ live_preflight_wrong_pool_interface }}:
+      expected {{ live_preflight_wrong_pool_id }}, found {{ live_preflight_live_datastore }}
+    live_preflight_expected_missing_interface_failure: >-
+      Storage-pool preflight failed for guest-1/{{ live_preflight_missing_interface }}:
+      expected {{ live_preflight_live_datastore }}, found none
+
+- name: Prove desired RAM above physical capacity fails for the RAM rule
+  block:
+    - name: Run pre-flight with desired guest RAM above physical capacity
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: main.yml
+      vars:
+        preflight_nautobot_url: "{{ live_nautobot_url }}"
+        preflight_read_token: "{{ live_service_account_values.pipeline.token }}"
+        preflight_desired_guests: "{{ live_preflight_over_ram_desired }}"
+      no_log: true
+
+    - name: Fail when over-capacity desired RAM is accepted
+      ansible.builtin.fail:
+        msg: Pre-flight accepted desired RAM above physical capacity.
+  rescue:
+    - name: Assert the desired RAM failure is the physical capacity rule
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_result.msg == live_preflight_expected_ram_failure
+        fail_msg: The over-capacity desired RAM input did not fail with the physical capacity message.
+      no_log: true
+    - name: Record the expected RAM rejection
+      ansible.builtin.set_fact:
+        live_preflight_ram_failure_seen: true
+
+- name: Require the over-capacity desired RAM negative to fail
+  ansible.builtin.assert:
+    that:
+      - live_preflight_ram_failure_seen | default(false)
+    fail_msg: The over-capacity desired RAM negative did not fail.
+
+- name: Prove a changed datastore fails for the storage-pool rule
+  block:
+    - name: Run pre-flight with a wrong datastore for a live disk
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: main.yml
+      vars:
+        preflight_nautobot_url: "{{ live_nautobot_url }}"
+        preflight_read_token: "{{ live_service_account_values.pipeline.token }}"
+        preflight_desired_guests: "{{ live_preflight_wrong_pool_desired }}"
+      no_log: true
+
+    - name: Fail when a changed datastore is accepted
+      ansible.builtin.fail:
+        msg: Pre-flight accepted a datastore that differs from the live disk pool.
+  rescue:
+    - name: Assert the wrong datastore failure names the guest and interface
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_result.msg == live_preflight_expected_wrong_pool_failure
+        fail_msg: The changed datastore did not fail with the expected guest and interface message.
+      no_log: true
+    - name: Record the expected wrong-pool rejection
+      ansible.builtin.set_fact:
+        live_preflight_wrong_pool_failure_seen: true
+
+- name: Require the wrong datastore negative to fail
+  ansible.builtin.assert:
+    that:
+      - live_preflight_wrong_pool_failure_seen | default(false)
+    fail_msg: The wrong datastore negative did not fail.
+
+- name: Prove an absent live disk interface fails for the storage-pool rule
+  block:
+    - name: Run pre-flight with a disk interface absent from the live guest
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: main.yml
+      vars:
+        preflight_nautobot_url: "{{ live_nautobot_url }}"
+        preflight_read_token: "{{ live_service_account_values.pipeline.token }}"
+        preflight_desired_guests: "{{ live_preflight_missing_interface_desired }}"
+      no_log: true
+
+    - name: Fail when an absent live disk interface is accepted
+      ansible.builtin.fail:
+        msg: Pre-flight accepted a disk interface absent from the live guest.
+  rescue:
+    - name: Assert the absent interface failure names the guest and interface
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_result.msg == live_preflight_expected_missing_interface_failure
+        fail_msg: The absent disk interface did not fail with the expected storage-pool message.
+      no_log: true
+    - name: Record the expected missing-interface rejection
+      ansible.builtin.set_fact:
+        live_preflight_missing_interface_failure_seen: true
+
+- name: Require the missing disk interface negative to fail
+  ansible.builtin.assert:
+    that:
+      - live_preflight_missing_interface_failure_seen | default(false)
+    fail_msg: The missing disk interface negative did not fail.

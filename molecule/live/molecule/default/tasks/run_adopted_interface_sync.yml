@@ -1,0 +1,17 @@
+---
+- name: Repeat the virtualization sync after the source change
+  ansible.builtin.include_role:
+    name: sync_in
+  vars:
+    sync_in_stages: [proxmox]
+    sync_in_pve_components: [virtualization]
+    sync_in_nautobot_url: "{{ live_nautobot_url }}"
+    sync_in_read_token: "{{ live_test_token }}"
+    sync_in_write_token: "{{ live_test_token }}"
+    sync_in_pve_api_url: "{{ live_proxmox_api_url }}"
+    sync_in_pve_token_id: "{{ live_pve_token_id }}"
+    sync_in_pve_token_secret: "{{ live_pve_token_secret }}"
+    sync_in_pve_ca_path: "{{ live_state_dir }}/tls/ca.crt"
+    sync_in_pve_api_timeout: 10
+  register: live_adopted_interface_second_sync
+  no_log: true

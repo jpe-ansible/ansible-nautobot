@@ -1,0 +1,63 @@
+---
+- name: Destroy only resources created by the live scenario
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Load live scenario variables
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/vars/live.yml"
+
+    - name: Inspect exact-name scenario containers
+      community.docker.docker_container_info:
+        name: "{{ item }}"
+      loop: "{{ live_container_names }}"
+      loop_control:
+        label: "{{ item }}"
+      register: live_destroy_containers
+
+    - name: Refuse containers without the scenario ownership label
+      ansible.builtin.assert:
+        that:
+          - >-
+            not item.exists or
+            live_owner_value in (item.container.Config.Labels | default({})).values()
+        fail_msg: "Refusing to remove a same-name container without the live scenario ownership label."
+      loop: "{{ live_destroy_containers.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      no_log: true
+
+    - name: Remove exact-name scenario containers
+      community.docker.docker_container:
+        name: "{{ item.item }}"
+        state: absent
+      loop: "{{ live_destroy_containers.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.exists
+
+    - name: Inspect the exact-name scenario network
+      community.docker.docker_network_info:
+        name: "{{ live_network_name }}"
+      register: live_destroy_network
+
+    - name: Refuse a network without the scenario ownership label
+      ansible.builtin.assert:
+        that:
+          - >-
+            not live_destroy_network.exists or
+            live_owner_value in (live_destroy_network.network.Labels | default({})).values()
+        fail_msg: "Refusing to remove a same-name network without the live scenario ownership label."
+      no_log: true
+
+    - name: Remove the exact-name scenario network
+      community.docker.docker_network:
+        name: "{{ live_network_name }}"
+        state: absent
+      when: live_destroy_network.exists
+
+    - name: Remove the private scenario state directory
+      ansible.builtin.file:
+        path: "{{ live_state_dir }}"
+        state: absent
