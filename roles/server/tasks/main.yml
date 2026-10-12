@@ -1,0 +1,223 @@
+---
+- name: Validate OpenBao and superuser inputs when managing the application
+  ansible.builtin.assert:
+    that:
+      - server_openbao_addr | length > 0
+      - server_openbao_token is defined and server_openbao_token | length > 0
+      - server_openbao_ca_file is defined and server_openbao_ca_file | length > 0
+      - server_superuser_password | length > 0
+    fail_msg: OpenBao and superuser inputs must be supplied when server_manage_app is enabled.
+  when: server_manage_app | bool
+
+- name: Validate the database credential when managing the application
+  ansible.builtin.assert:
+    that:
+      - server_db_password | length > 0
+    fail_msg: The database credential must be supplied when server_manage_app is enabled.
+  when: server_manage_app | bool
+
+- name: Install system packages, create the service account, and configure Redis
+  ansible.builtin.include_tasks: system_and_redis.yml
+
+- name: Resolve and persist the Nautobot SECRET_KEY
+  ansible.builtin.include_tasks: secret_key.yml
+
+- name: Render the Nautobot settings
+  ansible.builtin.template:
+    src: nautobot_config.py.j2
+    dest: "{{ server_root }}/nautobot_config.py"
+    owner: "{{ server_user }}"
+    group: "{{ server_group }}"
+    mode: "0644"
+  notify: Restart Nautobot services
+
+- name: Validate the environment file entries
+  ansible.builtin.include_tasks: env_validate.yml
+
+- name: Render the private Nautobot environment file
+  ansible.builtin.template:
+    src: nautobot.env.j2
+    dest: "{{ server_root }}/nautobot.env"
+    owner: "{{ server_user }}"
+    group: "{{ server_group }}"
+    mode: "0600"
+  no_log: true
+  notify: Restart Nautobot services
+
+- name: Render the uWSGI configuration
+  ansible.builtin.template:
+    src: uwsgi.ini.j2
+    dest: "{{ server_root }}/uwsgi.ini"
+    owner: "{{ server_user }}"
+    group: "{{ server_group }}"
+    mode: "0644"
+  notify: Restart Nautobot services
+
+- name: Install Nautobot systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - nautobot-server.service
+    - nautobot-worker.service
+    - nautobot-scheduler.service
+  notify:
+    - Reload systemd daemon
+    - Restart Nautobot services
+
+- name: Manage the Nautobot application
+  when: server_manage_app | bool
+  become: true
+  block:
+    - name: Create the Nautobot virtual environment
+      ansible.builtin.command:
+        cmd: "python3 -m venv {{ server_root }}"
+        creates: "{{ server_root }}/bin/python"
+      become: true
+      become_user: "{{ server_user }}"
+
+    - name: Ensure pip tooling is installed in the virtual environment
+      ansible.builtin.pip:
+        name:
+          - pip
+          - wheel
+        state: present
+        virtualenv: "{{ server_root }}"
+      become: true
+      become_user: "{{ server_user }}"
+
+    - name: Install pinned Nautobot applications
+      ansible.builtin.pip:
+        name: "{{ server_pip_packages }}"
+        state: present
+        virtualenv: "{{ server_root }}"
+      register: server_pip_install
+      become: true
+      become_user: "{{ server_user }}"
+
+    - name: Record pinned packages for future upgrades
+      ansible.builtin.copy:
+        content: "{{ server_pip_packages | join('\n') }}\n"
+        dest: "{{ server_local_requirements_file }}"
+        owner: "{{ server_user }}"
+        group: "{{ server_group }}"
+        mode: "0644"
+
+    - name: Run Nautobot database migrations
+      ansible.builtin.command:
+        cmd: "{{ server_root }}/bin/nautobot-server migrate"
+      environment: "{{ server_env }}"
+      register: server_migrate
+      changed_when: "'No migrations to apply' not in server_migrate.stdout"
+      failed_when: false
+      become: true
+      become_user: "{{ server_user }}"
+      no_log: true
+
+    - name: Report the migration return code
+      ansible.builtin.debug:
+        msg: "Nautobot migration completed with rc={{ server_migrate.rc }}."
+
+    - name: Require successful database migrations
+      ansible.builtin.assert:
+        that:
+          - server_migrate.rc == 0
+        fail_msg: "Nautobot migration failed with rc={{ server_migrate.rc }}."
+
+    - name: Read the completed post-upgrade package stamp
+      ansible.builtin.stat:
+        path: "{{ server_root }}/.post_upgrade_stamp"
+        checksum_algorithm: sha1
+      register: server_post_upgrade_stamp
+      become: true
+      become_user: "{{ server_user }}"
+
+    - name: Determine whether Nautobot post-upgrade operations are required
+      ansible.builtin.set_fact:
+        server_post_upgrade_needed: >-
+          {{ server_pip_install.changed | default(false)
+          or (server_post_upgrade_stamp.stat.checksum | default(''))
+          != (server_pip_packages | join(',') | hash('sha1')) }}
+
+    - name: Run Nautobot post-upgrade operations when packages changed
+      ansible.builtin.command:
+        cmd: "{{ server_root }}/bin/nautobot-server post_upgrade --no-migrate"
+      environment: "{{ server_env }}"
+      register: server_post_upgrade
+      changed_when: true
+      failed_when: false
+      become: true
+      become_user: "{{ server_user }}"
+      no_log: true
+      when: server_post_upgrade_needed | bool
+
+    - name: Report the post-upgrade return code
+      ansible.builtin.debug:
+        msg: "Nautobot post-upgrade completed with rc={{ server_post_upgrade.rc }}."
+      when: server_post_upgrade_needed | bool
+
+    - name: Require successful post-upgrade operations
+      ansible.builtin.assert:
+        that:
+          - server_post_upgrade.rc == 0
+        fail_msg: "Nautobot post-upgrade failed with rc={{ server_post_upgrade.rc }}."
+      when: server_post_upgrade_needed | bool
+
+    - name: Record the package pins after post-upgrade completes
+      ansible.builtin.copy:
+        content: "{{ server_pip_packages | join(',') }}"
+        dest: "{{ server_root }}/.post_upgrade_stamp"
+        owner: "{{ server_user }}"
+        group: "{{ server_group }}"
+        mode: "0644"
+      when: server_post_upgrade_needed | bool
+
+    - name: Ensure the first Nautobot superuser exists
+      ansible.builtin.command:
+        cmd: "{{ server_root }}/bin/nautobot-server createsuperuser --noinput"
+      environment: >-
+        {{ server_env | combine({
+          'DJANGO_SUPERUSER_USERNAME': server_superuser_name,
+          'DJANGO_SUPERUSER_EMAIL': server_superuser_email,
+          'DJANGO_SUPERUSER_PASSWORD': server_superuser_password
+        }) }}
+      register: server_superuser_create
+      changed_when: server_superuser_create.rc == 0
+      failed_when: >-
+        server_superuser_create.rc != 0
+        and 'is already taken' not in server_superuser_create.stderr
+      become: true
+      become_user: "{{ server_user }}"
+      no_log: true
+
+    - name: Apply pending Nautobot service handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start Nautobot services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - nautobot-server
+        - nautobot-worker
+        - nautobot-scheduler
+
+    - name: Wait for the Nautobot web interface to answer
+      ansible.builtin.uri:
+        url: "{{ server_web_answer_url }}"
+        status_code: [200, 302]
+        follow_redirects: none
+        validate_certs: "{{ server_nautobot_validate_certs }}"
+      register: server_web_answer
+      until: server_web_answer.status in [200, 302]
+      retries: 20
+      delay: 6
+      changed_when: false
+
+    - name: Reconcile service accounts and API tokens
+      ansible.builtin.include_tasks: accounts.yml
+      when: server_manage_accounts | bool

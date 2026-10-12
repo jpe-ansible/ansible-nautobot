@@ -1,0 +1,79 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    server_manage_app: false
+    server_manage_accounts: false
+    server_root: /opt/nautobot
+    server_secret_key_file: "{{ server_root }}/.secret_key"
+    server_db_host: postgres.example.test
+    server_db_password: 'molecule-db-"quoted"\placeholder'
+    server_ui_fqdn: nautobot.example.test
+    server_superuser_password: molecule-superuser-placeholder
+    server_env_cases:
+      - name: plain value
+        env: {NAUTOBOT_OK: plain}
+        rejected: false
+      - name: value with a double quote and a backslash
+        env: {NAUTOBOT_OK: 'a"b\c'}
+        rejected: false
+      - name: value with a line feed
+        env: {NAUTOBOT_BAD: "one\ntwo"}
+        rejected: true
+      - name: value with a carriage return
+        env: {NAUTOBOT_BAD: "one\rtwo"}
+        rejected: true
+      - name: key with a dash
+        env: {NAUTOBOT-BAD: value}
+        rejected: true
+      - name: key that starts with a digit
+        env: {1NAUTOBOT: value}
+        rejected: true
+      - name: key with a trailing line feed
+        env: {"NAUTOBOT_BAD\n": value}
+        rejected: true
+  tasks:
+    - name: Run the server role once to establish its test configuration
+      ansible.builtin.include_role:
+        name: server
+
+    - name: Read the generated SECRET_KEY fingerprint before the second converge
+      ansible.builtin.slurp:
+        src: "{{ server_secret_key_file }}"
+      register: server_first_secret_key
+      no_log: true
+
+    - name: Persist the test-only SECRET_KEY fingerprint
+      ansible.builtin.copy:
+        content: "{{ server_first_secret_key.content | b64decode | hash('sha256') }}\n"
+        dest: /tmp/server-secret-key.sha256
+        mode: "0600"
+      no_log: true
+
+    - name: Run the server role a second time
+      ansible.builtin.include_role:
+        name: server
+
+    - name: Confirm the SECRET_KEY survived the second converge
+      ansible.builtin.slurp:
+        src: "{{ server_secret_key_file }}"
+      register: server_second_secret_key
+      no_log: true
+
+    - name: Assert the SECRET_KEY remains stable across converges
+      ansible.builtin.assert:
+        that:
+          - >-
+            (server_second_secret_key.content | b64decode | hash('sha256'))
+            == (server_first_secret_key.content | b64decode | hash('sha256'))
+        fail_msg: SECRET_KEY changed across converges.
+      no_log: true
+
+    - name: Check the environment entry validation against each case
+      ansible.builtin.include_tasks: tasks/env_case.yml
+      loop: "{{ server_env_cases }}"
+      loop_control:
+        loop_var: server_env_case
+        label: "{{ server_env_case.name }}"

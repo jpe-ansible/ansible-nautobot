@@ -1,0 +1,392 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    server_root: /opt/nautobot
+    server_ui_fqdn: nautobot.example.test
+    server_db_host: postgres.example.test
+    server_superuser_password: molecule-superuser-placeholder
+    server_bootstrap_expected_models:
+      custom_field: true
+      git_repository: true
+      tag: true
+      location_type: true
+      location: true
+      manufacturer: true
+      role: false
+      provider: true
+      circuit_type: true
+      circuit: true
+      vlan: true
+      prefix: true
+  tasks:
+    - name: Load the server role defaults for contract assertions
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../roles/server/defaults/main.yml"
+        name: server_role_defaults
+
+    - name: Load the server role argument specification for contract assertions
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../roles/server/meta/argument_specs.yml"
+        name: server_role_specs
+
+    - name: Load the inbound sync Bootstrap identifiers for permission assertions
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../roles/sync_in/defaults/main/05_bootstrap.yml"
+        name: server_sync_in_bootstrap_defaults
+
+    - name: Read the server account declarations for permission assertions
+      ansible.builtin.set_fact:
+        server_account_task_definitions: >-
+          {{ lookup('ansible.builtin.file', playbook_dir ~ '/../../../../roles/server/tasks/accounts.yml')
+          | from_yaml }}
+      delegate_to: localhost
+      become: false
+
+    - name: Select the managed service account permission definitions
+      ansible.builtin.set_fact:
+        server_service_account_definitions: >-
+          {{ (server_account_task_definitions
+          | selectattr('name', 'equalto', 'Define the managed Nautobot service accounts')
+          | first)['ansible.builtin.set_fact']['server_service_accounts'] }}
+      delegate_to: localhost
+      become: false
+
+    - name: Assert least-privilege permission defaults follow the sync_in flow identifiers
+      ansible.builtin.assert:
+        that:
+          - >-
+            server_role_defaults.server_bootstrap_repository_name | default('')
+            == server_sync_in_bootstrap_defaults.sync_in_bootstrap_repo_name
+          - >-
+            server_role_defaults.server_bootstrap_job_name | default('')
+            == server_sync_in_bootstrap_defaults.sync_in_bootstrap_job_name
+          - server_role_defaults.server_write_delete_types | default([]) == [
+              'dcim.device',
+              'dcim.inventoryitem',
+              'dcim.module',
+              'dcim.modulebay',
+              'ipam.ipaddress',
+              'virtualization.cluster',
+              'virtualization.virtualmachine',
+              'virtualization.vminterface'
+            ]
+          - >-
+            ((server_service_account_definitions | selectattr('name', 'equalto', 'writer') | first)
+            .permissions | selectattr('name', 'equalto', 'ansible-sync-in-bootstrap-repository') | first)
+            .constraints == {
+              'name': ('{' ~ '{ server_bootstrap_repository_name ' ~ '}' ~ '}')
+            }
+          - >-
+            ((server_service_account_definitions | selectattr('name', 'equalto', 'writer') | first)
+            .permissions | selectattr('name', 'equalto', 'ansible-sync-in-bootstrap-job') | first)
+            .constraints == {
+              'name': ('{' ~ '{ server_bootstrap_job_name ' ~ '}' ~ '}')
+            }
+          - >-
+            ((server_service_account_definitions | selectattr('name', 'equalto', 'writer') | first)
+            .permissions | selectattr('name', 'equalto', 'ansible-sync-in-writer') | first).actions
+            == ['view', 'add', 'change']
+          - >-
+            ((server_service_account_definitions | selectattr('name', 'equalto', 'writer') | first)
+            .permissions | selectattr('name', 'equalto', 'ansible-sync-in-writer-delete') | first).object_types
+            == ('{' ~ '{ server_write_delete_types ' ~ '}' ~ '}')
+          - >-
+            ((server_service_account_definitions | selectattr('name', 'equalto', 'writer') | first)
+            .permissions | selectattr('name', 'equalto', 'ansible-sync-in-writer-delete') | first).actions
+            == ['delete']
+        fail_msg: Service account permissions do not match the sync_in Bootstrap identifiers and prune surface.
+
+    - name: Read the server role task list for contract assertions
+      ansible.builtin.set_fact:
+        server_role_tasks: >-
+          {{ lookup('ansible.builtin.file', playbook_dir ~ '/../../../../roles/server/tasks/main.yml')
+          | from_yaml }}
+      delegate_to: localhost
+      become: false
+
+    - name: Select the application block
+      ansible.builtin.set_fact:
+        server_app_blocks: >-
+          {{ server_role_tasks
+          | selectattr('name', 'equalto', 'Manage the Nautobot application')
+          | list }}
+        server_app_block: >-
+          {{ (server_role_tasks
+          | selectattr('name', 'equalto', 'Manage the Nautobot application')
+          | first) | default({}) }}
+
+    - name: Select the service account include and first superuser task
+      ansible.builtin.set_fact:
+        server_account_include_tasks: >-
+          {{ server_app_block.get('block', [])
+          | selectattr('name', 'equalto', 'Reconcile service accounts and API tokens')
+          | list }}
+        server_superuser_tasks: >-
+          {{ server_app_block.get('block', [])
+          | selectattr('name', 'equalto', 'Ensure the first Nautobot superuser exists')
+          | list }}
+
+    - name: Assert account reconciliation is guarded without disabling application setup
+      ansible.builtin.assert:
+        that:
+          - server_app_blocks | length == 1
+          - server_app_block.get('when') == 'server_manage_app | bool'
+          - server_account_include_tasks | length == 1
+          - server_account_include_tasks[0]['ansible.builtin.include_tasks'] == 'accounts.yml'
+          - server_account_include_tasks[0]['when'] == 'server_manage_accounts | bool'
+          - server_superuser_tasks | length == 1
+          - server_superuser_tasks[0]['ansible.builtin.command']['cmd'] is search('createsuperuser --noinput')
+          - server_superuser_tasks[0].get('when') is none
+        fail_msg: Service account reconciliation is not guarded by server_manage_accounts.
+
+    - name: Assert application management remains enabled by default and manages the first superuser
+      ansible.builtin.assert:
+        that:
+          - server_role_defaults.server_manage_app | bool
+          - server_role_defaults.server_manage_accounts | bool
+          - server_role_specs.argument_specs.main.options.server_manage_accounts.type == 'bool'
+          - server_role_specs.argument_specs.main.options.server_manage_accounts.default | bool
+          - server_role_specs.argument_specs.main.options.server_manage_accounts.description
+            == 'Reconcile Nautobot service accounts, permissions, tokens and published token fields.'
+        fail_msg: Account management defaults or its argument specification are missing.
+
+    - name: Read the rendered Nautobot settings
+      ansible.builtin.slurp:
+        src: "{{ server_root }}/nautobot_config.py"
+      register: server_config
+
+    - name: Decode the rendered Nautobot settings
+      ansible.builtin.set_fact:
+        server_rendered_config: "{{ server_config.content | b64decode }}"
+
+    - name: Assert Bootstrap defaults match the documented model selection
+      ansible.builtin.assert:
+        that:
+          - server_role_defaults.server_bootstrap_models_to_sync == server_bootstrap_expected_models
+          - not server_role_defaults.server_bootstrap_models_to_sync.role | bool
+          - >-
+            ('"bootstrap_models_to_sync": '
+            ~ (server_bootstrap_expected_models | to_json)) in server_rendered_config
+        fail_msg: Rendered Bootstrap model selection differs from its documented defaults.
+
+    - name: Assert settings include the UI host, apps, DB host, and Bootstrap keys
+      ansible.builtin.assert:
+        that:
+          - "server_ui_fqdn in server_rendered_config"
+          - "'nautobot_ssot' in server_rendered_config"
+          - "'nautobot_device_onboarding' in server_rendered_config"
+          - "server_db_host in server_rendered_config"
+          - "'enable_bootstrap' in server_rendered_config"
+          - "'bootstrap_nautobot_environment_branch' in server_rendered_config"
+        fail_msg: Rendered settings are missing the server configuration contract.
+      vars:
+        server_rendered_config: "{{ server_config.content | b64decode }}"
+
+    - name: Stat the Nautobot environment file
+      ansible.builtin.stat:
+        path: "{{ server_root }}/nautobot.env"
+      register: server_env_stat
+
+    - name: Read the Nautobot environment file
+      ansible.builtin.slurp:
+        src: "{{ server_root }}/nautobot.env"
+      register: server_env_file
+
+    - name: Assert the environment file is private and omits credentials outside its scope
+      ansible.builtin.assert:
+        that:
+          - server_env_stat.stat.exists
+          - server_env_stat.stat.mode == '0600'
+          - server_superuser_password not in server_env_text
+          - "'molecule-export-credential' not in server_env_text"
+          - "'AWS_ACCESS_KEY_ID' not in server_env_text"
+          - "'AWS_SECRET_ACCESS_KEY' not in server_env_text"
+        fail_msg: nautobot.env is missing, has an unsafe mode, or contains an unrelated credential.
+      vars:
+        server_env_text: "{{ server_env_file.content | b64decode }}"
+
+    - name: Assert every environment entry is a double-quoted assignment that keeps the original text
+      ansible.builtin.assert:
+        that:
+          - >-
+            server_env_text.splitlines() | reject('match', '^#') | reject('match', '^$')
+            | reject('match', '^[A-Za-z_][A-Za-z0-9_]*=".*"$') | list | length == 0
+          - >-
+            ('NAUTOBOT_DB_PASSWORD="molecule-db-\\"quoted\\"\\\\placeholder"')
+            in server_env_text.splitlines()
+        fail_msg: nautobot.env does not quote its values or does not escape a double quote and a backslash.
+      vars:
+        server_env_text: "{{ server_env_file.content | b64decode }}"
+      no_log: true
+
+    - name: Assert the settings enable secure cookies when TLS ends at the proxy
+      ansible.builtin.assert:
+        that:
+          - "'SESSION_COOKIE_SECURE = True' in server_rendered_config.splitlines()"
+          - "'CSRF_COOKIE_SECURE = True' in server_rendered_config.splitlines()"
+        fail_msg: Secure cookie flags are missing although the proxy header is trusted.
+
+    - name: Read the rendered uWSGI configuration
+      ansible.builtin.slurp:
+        src: "{{ server_root }}/uwsgi.ini"
+      register: server_uwsgi_file
+
+    - name: Assert the web service listens on loopback by default
+      ansible.builtin.assert:
+        that:
+          - "'http = 127.0.0.1:' ~ server_role_defaults.server_web_port in server_uwsgi_lines"
+          - server_role_defaults.server_web_bind == '127.0.0.1'
+          - server_role_specs.argument_specs.main.options.server_web_bind.default == '127.0.0.1'
+        fail_msg: The web service does not listen on loopback by default.
+      vars:
+        server_uwsgi_lines: "{{ (server_uwsgi_file.content | b64decode).splitlines() }}"
+
+    - name: Assert SECRET_KEY exists and is stable after the second converge
+      ansible.builtin.slurp:
+        src: "{{ server_root }}/.secret_key"
+      register: server_final_secret_key
+      no_log: true
+
+    - name: Read the test-only SECRET_KEY fingerprint
+      ansible.builtin.slurp:
+        src: /tmp/server-secret-key.sha256
+      register: server_secret_key_fingerprint
+      no_log: true
+
+    - name: Confirm SECRET_KEY persistence and stability
+      ansible.builtin.assert:
+        that:
+          - server_final_secret_key.content | b64decode | length > 0
+          - >-
+            (server_final_secret_key.content | b64decode | hash('sha256'))
+            == (server_secret_key_fingerprint.content | b64decode | trim)
+        fail_msg: SECRET_KEY was not persisted once and kept stable.
+      no_log: true
+
+    - name: Stat the three Nautobot systemd units
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/{{ item }}"
+      loop:
+        - nautobot-server.service
+        - nautobot-worker.service
+        - nautobot-scheduler.service
+      register: server_units
+
+    - name: Assert all three Nautobot systemd units exist
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: "Nautobot systemd unit {{ item.item }} is missing."
+      loop: "{{ server_units.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Read Redis configuration
+      ansible.builtin.slurp:
+        src: /etc/redis/redis.conf
+      register: server_redis_conf
+
+    - name: Assert Redis is bound to loopback
+      ansible.builtin.assert:
+        that:
+          - "'bind localhost' in (server_redis_conf.content | b64decode)"
+        fail_msg: Redis is not bound to loopback.
+
+    - name: Inspect role files for standalone scripts
+      ansible.builtin.find:
+        paths: "{{ playbook_dir }}/../../../../roles/server"
+        recurse: true
+        patterns:
+          - "*.py"
+          - "*.sh"
+          - "*.rb"
+      register: server_script_files
+      delegate_to: localhost
+      become: false
+
+    - name: Inspect role directories for a files directory
+      ansible.builtin.find:
+        paths: "{{ playbook_dir }}/../../../../roles/server"
+        recurse: true
+        file_type: directory
+        patterns: files
+      register: server_files_directories
+      delegate_to: localhost
+      become: false
+
+    - name: Assert the role contains no standalone scripts or files directory
+      ansible.builtin.assert:
+        that:
+          - server_script_files.matched == 0
+          - server_files_directories.matched == 0
+        fail_msg: The server role contains a standalone script or files directory.
+      delegate_to: localhost
+      become: false
+
+    - name: Search role tasks for file lookup script input
+      ansible.builtin.command:
+        argv:
+          - rg
+          - -F
+          - -n
+          - "lookup('ansible.builtin.file'"
+          - "{{ playbook_dir }}/../../../../roles/server/tasks"
+      register: server_file_lookup_search
+      changed_when: false
+      failed_when: server_file_lookup_search.rc not in [0, 1]
+      delegate_to: localhost
+      become: false
+
+    - name: Assert server tasks do not read scripts through file lookups
+      ansible.builtin.assert:
+        that:
+          - server_file_lookup_search.rc == 1
+        fail_msg: A server task still reads a file lookup script.
+      delegate_to: localhost
+      become: false
+
+    # The remaining tasks replace the play's variables with the role defaults so the templates render with
+    # chosen overrides; keep them last.
+    - name: Load every role default so the templates can be rendered with chosen overrides
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../roles/server/defaults/main.yml"
+
+    - name: Choose a caller bind address and distrust the proxy header
+      ansible.builtin.set_fact:
+        server_web_bind: 192.0.2.10
+        server_trust_proxy_ssl_header: false
+
+    - name: Render the uWSGI configuration with the caller bind address
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../../../roles/server/templates/uwsgi.ini.j2"
+        dest: /tmp/uwsgi-caller-bind.ini
+        mode: "0600"
+
+    - name: Render the settings with the proxy header distrusted
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../../../roles/server/templates/nautobot_config.py.j2"
+        dest: /tmp/nautobot_config-untrusted.py
+        mode: "0600"
+
+    - name: Read the two override renders
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop:
+        - /tmp/uwsgi-caller-bind.ini
+        - /tmp/nautobot_config-untrusted.py
+      register: server_override_renders
+
+    - name: Assert the caller bind is used and no secure cookie flag is set without the proxy header
+      ansible.builtin.assert:
+        that:
+          - "'http = 192.0.2.10:' ~ server_web_port in server_bind_lines"
+          - "'SESSION_COOKIE_SECURE' not in server_untrusted_text"
+          - "'CSRF_COOKIE_SECURE' not in server_untrusted_text"
+          - "'SECURE_PROXY_SSL_HEADER' not in server_untrusted_text"
+        fail_msg: The caller bind or the proxy-header cookie rule is not honoured.
+      vars:
+        server_bind_lines: "{{ (server_override_renders.results[0].content | b64decode).splitlines() }}"
+        server_untrusted_text: "{{ server_override_renders.results[1].content | b64decode }}"

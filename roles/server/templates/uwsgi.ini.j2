@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+[uwsgi]
+chdir = {{ server_root }}
+module = nautobot.core.wsgi:application
+env = NAUTOBOT_ROOT={{ server_root }}
+http = {{ server_web_bind }}:{{ server_web_port }}
+master = true
+processes = {{ server_uwsgi_processes }}
+threads = {{ server_uwsgi_threads }}
+vacuum = true
+max-requests = 5000
+buffer-size = 65535
+static-map = /static={{ server_root }}/static
