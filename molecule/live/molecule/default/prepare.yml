@@ -24,6 +24,7 @@
       loop:
         - path: "{{ live_state_dir }}/tls"
         - path: "{{ live_state_dir }}/proxmox"
+          mode: "0755"
         - path: "{{ live_state_dir }}/hec"
           mode: "0777"
 
@@ -32,6 +33,7 @@
         src: "{{ playbook_dir }}/fixtures/proxmox/api/"
         dest: "{{ live_state_dir }}/proxmox/"
         mode: "0644"
+        directory_mode: "0755"
 
     - name: Generate mock Proxmox CA key
       community.crypto.openssl_privatekey:
