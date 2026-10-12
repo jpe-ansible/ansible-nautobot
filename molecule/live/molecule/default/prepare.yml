@@ -1,0 +1,499 @@
+---
+- name: Prepare live Nautobot prerequisites and the Proxmox API mock
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Load live scenario variables
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/vars/live.yml"
+
+    - name: Load the generated scenario credentials from container configuration
+      ansible.builtin.include_tasks: tasks/load_live_container_config.yml
+
+    - name: Load Nautobot global settings
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../global_settings.yml"
+        name: live_global_settings
+
+    - name: Create private Proxmox mock directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode | default('0700') }}"
+      loop:
+        - path: "{{ live_state_dir }}/tls"
+        - path: "{{ live_state_dir }}/proxmox"
+        - path: "{{ live_state_dir }}/hec"
+          mode: "0777"
+
+    - name: Copy static Proxmox API responses
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/fixtures/proxmox/api/"
+        dest: "{{ live_state_dir }}/proxmox/"
+        mode: "0644"
+
+    - name: Generate mock Proxmox CA key
+      community.crypto.openssl_privatekey:
+        path: "{{ live_state_dir }}/tls/ca.key"
+        type: RSA
+        size: 2048
+        mode: "0600"
+      no_log: true
+
+    - name: Generate mock Proxmox CA request
+      community.crypto.openssl_csr:
+        path: "{{ live_state_dir }}/tls/ca.csr"
+        privatekey_path: "{{ live_state_dir }}/tls/ca.key"
+        common_name: Nautobot Live Proxmox Test CA
+        basic_constraints:
+          - CA:TRUE
+        basic_constraints_critical: true
+        key_usage:
+          - keyCertSign
+          - cRLSign
+        key_usage_critical: true
+        mode: "0600"
+      no_log: true
+
+    - name: Sign mock Proxmox CA certificate
+      community.crypto.x509_certificate:
+        path: "{{ live_state_dir }}/tls/ca.crt"
+        csr_path: "{{ live_state_dir }}/tls/ca.csr"
+        privatekey_path: "{{ live_state_dir }}/tls/ca.key"
+        provider: selfsigned
+        selfsigned_not_after: "+30d"
+        mode: "0644"
+      no_log: true
+
+    - name: Generate mock Proxmox server key
+      community.crypto.openssl_privatekey:
+        path: "{{ live_state_dir }}/tls/server.key"
+        type: RSA
+        size: 2048
+        mode: "0600"
+      no_log: true
+
+    - name: Generate mock Proxmox server request
+      community.crypto.openssl_csr:
+        path: "{{ live_state_dir }}/tls/server.csr"
+        privatekey_path: "{{ live_state_dir }}/tls/server.key"
+        common_name: localhost
+        subject_alt_name:
+          - DNS:localhost
+          - IP:127.0.0.1
+        basic_constraints:
+          - CA:FALSE
+        key_usage:
+          - digitalSignature
+          - keyEncipherment
+        extended_key_usage:
+          - serverAuth
+        mode: "0600"
+      no_log: true
+
+    - name: Sign mock Proxmox server certificate
+      community.crypto.x509_certificate:
+        path: "{{ live_state_dir }}/tls/server.crt"
+        csr_path: "{{ live_state_dir }}/tls/server.csr"
+        ownca_path: "{{ live_state_dir }}/tls/ca.crt"
+        ownca_privatekey_path: "{{ live_state_dir }}/tls/ca.key"
+        provider: ownca
+        ownca_not_after: "+30d"
+        mode: "0644"
+      no_log: true
+
+    - name: Install the mock HTTPS server configuration
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/templates/nginx.conf.j2"
+        dest: "{{ live_state_dir }}/nginx.conf"
+        mode: "0644"
+
+    - name: Start HTTPS Proxmox API mock
+      community.docker.docker_container:
+        name: "{{ live_proxmox_name }}"
+        image: "{{ live_nginx_image }}"
+        state: started
+        networks:
+          - name: "{{ live_network_name }}"
+        labels:
+          io.dryvist.molecule.scenario: "{{ live_owner_value }}"
+        published_ports:
+          - 127.0.0.1::443
+        volumes:
+          - "{{ live_state_dir }}/proxmox:/usr/share/nginx/html:ro"
+          - "{{ live_state_dir }}/hec:/var/log/nginx/hec:rw"
+          - "{{ live_state_dir }}/nginx.conf:/etc/nginx/conf.d/default.conf:ro"
+          - "{{ live_state_dir }}/tls:/etc/nginx/test-tls:ro"
+
+    - name: Resolve the published service endpoints
+      ansible.builtin.include_tasks: tasks/resolve_ports.yml
+
+    - name: Wait for OpenBao readiness
+      ansible.builtin.uri:
+        url: "{{ live_openbao_addr }}/v1/sys/health"
+        method: GET
+        status_code: 200
+        return_content: false
+      register: live_openbao_health
+      changed_when: false
+      retries: 30
+      delay: 2
+      until: live_openbao_health.status | default(0) | int == 200
+
+    - name: Read OpenBao mount configuration
+      ansible.builtin.uri:
+        url: "{{ live_openbao_addr }}/v1/sys/mounts"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ live_openbao_root_token }}"
+        status_code: 200
+        return_content: true
+      register: live_openbao_mount_response
+      no_log: true
+
+    - name: Save safe OpenBao mount metadata
+      ansible.builtin.set_fact:
+        live_openbao_secret_mount: "{{ live_openbao_mount_response.json.data.get(live_openbao_mount ~ '/', {}) }}"
+
+    - name: Require the development secret mount to provide KV v2
+      ansible.builtin.assert:
+        that:
+          - live_openbao_secret_mount.type | default('') == 'kv'
+          - live_openbao_secret_mount.options.version | default('') == '2'
+        fail_msg: >-
+          OpenBao secret/ is not a KV v2 mount; mounts were
+          {{ live_openbao_mount_response.json.data.keys() | list | to_json }}.
+
+    - name: Wait for initial Nautobot API readiness
+      ansible.builtin.include_tasks: tasks/wait_nautobot.yml
+      vars:
+        live_status_retries: 60
+
+    - name: Create custom fields from the shared Bootstrap definition
+      networktocode.nautobot.custom_field:
+        url: "{{ live_nautobot_url }}"
+        token: "{{ live_test_token }}"
+        label: "{{ item.label }}"
+        key: "{{ item.label | lower | replace(' ', '_') }}"
+        type: "{{ item.type }}"
+        content_types: "{{ item.content_types }}"
+        description: "{{ item.description }}"
+        grouping: "{{ item.grouping | default(omit) }}"
+        state: present
+      loop: "{{ live_global_settings.custom_field }}"
+      loop_control:
+        label: "{{ item.label }}"
+      no_log: true
+
+    - name: Restart Nautobot after registering custom fields
+      community.docker.docker_container:
+        name: "{{ live_nautobot_name }}"
+        state: started
+        restart: true
+      no_log: true
+
+    - name: Resolve the service endpoints again after the restart
+      ansible.builtin.include_tasks: tasks/resolve_ports.yml
+
+    - name: Wait for Nautobot after its schema restart
+      ansible.builtin.include_tasks: tasks/wait_nautobot.yml
+      vars:
+        live_status_retries: 20
+
+    - name: Create shared Active status
+      networktocode.nautobot.status:
+        url: "{{ live_nautobot_url }}"
+        token: "{{ live_test_token }}"
+        name: Active
+        content_types:
+          - dcim.device
+          - dcim.interface
+          - dcim.location
+          - dcim.module
+          - dcim.rack
+          - circuits.circuit
+          - ipam.ipaddress
+          - ipam.prefix
+          - virtualization.virtualmachine
+          - virtualization.vminterface
+        state: present
+      no_log: true
+
+    - name: Create the Bootstrap-defined export GraphQL query
+      ansible.builtin.uri:
+        url: "{{ live_nautobot_url }}/api/extras/graphql-queries/"
+        method: POST
+        headers:
+          Authorization: "Token {{ live_test_token }}"
+          Content-Type: application/json
+        body_format: json
+        body: >-
+          {{ live_global_settings.graph_ql_query
+             | selectattr('name', 'equalto', 'nautobot-export') | first }}
+        status_code: 201
+        return_content: true
+      no_log: true
+
+    - name: Create the curated circuit type through the REST API
+      ansible.builtin.uri:
+        url: "{{ live_nautobot_url }}/api/circuits/circuit-types/"
+        method: POST
+        headers:
+          Authorization: "Token {{ live_test_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          name: Internet
+          slug: internet
+        status_code: 201
+        return_content: true
+      no_log: true
+
+    - name: Create the Proxmox cluster type for the adoption seed
+      networktocode.nautobot.cluster_type:
+        url: "{{ live_nautobot_url }}"
+        token: "{{ live_test_token }}"
+        name: Proxmox
+        state: present
+      no_log: true
+
+    - name: Create the source cluster for the adoption seed
+      networktocode.nautobot.cluster:
+        url: "{{ live_nautobot_url }}"
+        token: "{{ live_test_token }}"
+        name: node-a
+        cluster_type: Proxmox
+        state: present
+      no_log: true
+
+    - name: Create a separate cluster for adoption rejection checks
+      networktocode.nautobot.cluster:
+        url: "{{ live_nautobot_url }}"
+        token: "{{ live_test_token }}"
+        name: foreign-cluster
+        cluster_type: Proxmox
+        state: present
+      no_log: true
+
+    - name: Create the VirtualMachine role for the adoption seed
+      networktocode.nautobot.role:
+        url: "{{ live_nautobot_url }}"
+        token: "{{ live_test_token }}"
+        name: vm
+        content_types:
+          - virtualization.virtualmachine
+        state: present
+      no_log: true
+
+    - name: Read VirtualMachine seed references through GraphQL
+      ansible.builtin.uri:
+        url: "{{ live_nautobot_url }}/api/graphql/"
+        method: POST
+        headers:
+          Authorization: "Token {{ live_test_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          query: |
+            query {
+              clusters { id name }
+              roles { id name }
+              statuses { id name }
+            }
+        status_code: 200
+        return_content: true
+      register: live_adoption_reference_query
+      no_log: true
+
+    - name: Select exact references for the adoption seed
+      ansible.builtin.set_fact:
+        live_adoption_cluster_id: >-
+          {{ (live_adoption_reference_query.json.data.clusters
+              | selectattr('name', 'equalto', 'node-a') | first).id }}
+        live_foreign_cluster_id: >-
+          {{ (live_adoption_reference_query.json.data.clusters
+              | selectattr('name', 'equalto', 'foreign-cluster') | first).id }}
+        live_adoption_role_id: >-
+          {{ (live_adoption_reference_query.json.data.roles
+              | selectattr('name', 'equalto', 'vm') | first).id }}
+        live_active_status_id: >-
+          {{ (live_adoption_reference_query.json.data.statuses
+              | selectattr('name', 'equalto', 'Active') | first).id }}
+
+    - name: Create an unowned VirtualMachine through the REST API
+      ansible.builtin.uri:
+        url: "{{ live_nautobot_url }}/api/virtualization/virtual-machines/"
+        method: POST
+        headers:
+          Authorization: "Token {{ live_test_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          name: guest-1
+          cluster: "{{ live_adoption_cluster_id }}"
+          role: "{{ live_adoption_role_id }}"
+          status: "{{ live_active_status_id }}"
+          vcpus: 1
+          memory: 1024
+          disk: 8
+        status_code: 201
+        return_content: true
+      register: live_adoption_vm_create
+      no_log: true
+
+    - name: Require the adoption seed to have no ownership marker
+      ansible.builtin.assert:
+        that:
+          - live_adoption_vm_create.json.id is defined
+          - >-
+            (live_adoption_vm_create.json.custom_fields | default({}, true)).sync_source
+            | default('', true) == ''
+        fail_msg: The REST-created adoption seed was missing or already carried a sync_source value.
+
+    - name: Save the adoption seed identity and REST references
+      ansible.builtin.copy:
+        dest: "{{ live_state_dir }}/adoption.yml"
+        mode: "0600"
+        content: |
+          live_adopted_vm_id: {{ live_adoption_vm_create.json.id }}
+          live_adoption_cluster_id: {{ live_adoption_cluster_id }}
+          live_foreign_cluster_id: {{ live_foreign_cluster_id }}
+          live_adoption_role_id: {{ live_adoption_role_id }}
+          live_active_status_id: {{ live_active_status_id }}
+
+    - name: Create Location Types from the shared Bootstrap definition
+      networktocode.nautobot.location_type:
+        url: "{{ live_nautobot_url }}"
+        token: "{{ live_test_token }}"
+        name: "{{ item.name }}"
+        nestable: "{{ item.nestable }}"
+        content_types: "{{ item.content_types }}"
+        state: present
+      loop: "{{ live_global_settings.location_type }}"
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true
+
+    - name: Create root Locations from the shared Bootstrap definition
+      networktocode.nautobot.location:
+        url: "{{ live_nautobot_url }}"
+        token: "{{ live_test_token }}"
+        name: "{{ item.name }}"
+        location_type: "{{ item.location_type }}"
+        status: "{{ item.status }}"
+        state: present
+      loop: "{{ live_global_settings.location }}"
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true
+
+    - name: Create Proxmox managed Prefixes
+      networktocode.nautobot.prefix:
+        url: "{{ live_nautobot_url }}"
+        token: "{{ live_test_token }}"
+        prefix: "{{ item }}"
+        namespace: Global
+        status: Active
+        type: Network
+        state: present
+      loop: "{{ live_prefixes }}"
+      loop_control:
+        label: "{{ item }}"
+      no_log: true
+
+    - name: Create unowned control IP address
+      networktocode.nautobot.ip_address:
+        url: "{{ live_nautobot_url }}"
+        token: "{{ live_test_token }}"
+        address: 192.0.2.254/32
+        namespace: Global
+        status: Active
+        type: Host
+        state: present
+      no_log: true
+
+    - name: Create an unowned guest address with a distinctive description
+      networktocode.nautobot.ip_address:
+        url: "{{ live_nautobot_url }}"
+        token: "{{ live_test_token }}"
+        address: 198.51.100.30/32
+        namespace: Global
+        status: Active
+        type: Host
+        description: Foreign address retained by the live scenario
+        state: present
+      no_log: true
+
+    - name: Create a manual address for the adopted guest interface
+      networktocode.nautobot.ip_address:
+        url: "{{ live_nautobot_url }}"
+        token: "{{ live_test_token }}"
+        address: 198.51.100.40/32
+        namespace: Global
+        status: Active
+        type: Host
+        description: Manual address retained on the adopted guest interface
+        state: present
+      no_log: true
+
+    - name: Create an unowned guest interface with the manual address
+      networktocode.nautobot.vm_interface:
+        url: "{{ live_nautobot_url }}"
+        token: "{{ live_test_token }}"
+        virtual_machine: guest-1
+        name: net0
+        mac_address: 02:00:00:00:00:01
+        enabled: true
+        status: Active
+        ip_addresses:
+          state: merge
+          objects:
+            - ip_address: 198.51.100.40/32
+        state: present
+      no_log: true
+
+    - name: Create management reservations for the bound Proxmox nodes
+      networktocode.nautobot.ip_address:
+        url: "{{ live_nautobot_url }}"
+        token: "{{ live_test_token }}"
+        address: "{{ item.address }}"
+        namespace: Global
+        status: Active
+        type: Host
+        dns_name: "{{ item.dns_name }}"
+        state: present
+      loop:
+        - address: 192.0.2.240/32
+          dns_name: node-a
+        - address: 198.51.100.240/32
+          dns_name: node-b
+      loop_control:
+        label: management reservation
+      no_log: true
+
+    - name: Reconcile service accounts before the first sync read
+      ansible.builtin.include_tasks: tasks/run_server_accounts.yml
+
+    - name: Load service account tokens from the scenario secret store
+      ansible.builtin.include_tasks: tasks/load_live_service_secrets.yml
+
+    - name: Plan both inbound stages against the prepared Nautobot data
+      ansible.builtin.include_tasks: tasks/run_plan.yml
+      vars:
+        live_plan_module_quantity: 2
+
+    - name: Assert the plan lists creations for every family and no other action
+      ansible.builtin.assert:
+        that:
+          - >-
+            ['nodes', 'virtualization', 'drives', 'hardware']
+            | difference(sync_in_plan.keys() | list) | length == 0
+          - sync_in_plan.nodes.create | selectattr('object_kind', 'equalto', 'device') | list | length == 2
+          - >-
+            sync_in_plan.virtualization.create | selectattr('object_kind', 'equalto', 'virtual_machine')
+            | list | length > 0
+          - sync_in_plan.drives.create | selectattr('object_kind', 'equalto', 'inventory_item') | list | length > 0
+          - sync_in_plan.hardware.create | selectattr('object_kind', 'equalto', 'module') | list | length == 2
+          - sync_in_plan | dict2items | map(attribute='value.delete') | map('length') | sum == 0
+        fail_msg: "the plan against empty Nautobot data did not list the expected creations"

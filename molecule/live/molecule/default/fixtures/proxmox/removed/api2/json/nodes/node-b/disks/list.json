@@ -1,0 +1,1 @@
+{"data":[{"type":"ssd","serial":"TEST-NODE-B-01","wwn":"5000000000000003","model":"Example SSD","vendor":"Example","devpath":"/dev/sda","size":1000000000,"used":"LVM"}]}

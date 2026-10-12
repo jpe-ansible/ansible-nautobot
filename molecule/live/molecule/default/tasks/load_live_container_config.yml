@@ -1,0 +1,35 @@
+---
+- name: Read the Nautobot container configuration
+  community.docker.docker_container_info:
+    name: "{{ live_nautobot_name }}"
+  register: live_nautobot_container_info
+  no_log: true
+
+- name: Read the OpenBao container configuration
+  community.docker.docker_container_info:
+    name: "{{ live_openbao_name }}"
+  register: live_openbao_container_info
+  no_log: true
+
+- name: Load scenario credentials from container configuration
+  ansible.builtin.set_fact:
+    live_test_token: >-
+      {{ (live_nautobot_container_info.container.Config.Env
+          | select('match', '^NAUTOBOT_SUPERUSER_API_TOKEN=') | first).split('=', 1)[1] }}
+    live_superuser_password: >-
+      {{ (live_nautobot_container_info.container.Config.Env
+          | select('match', '^NAUTOBOT_SUPERUSER_PASSWORD=') | first).split('=', 1)[1] }}
+    live_openbao_root_token: >-
+      {{ (live_openbao_container_info.container.Config.Env
+          | select('match', '^BAO_DEV_ROOT_TOKEN_ID=') | first).split('=', 1)[1] }}
+  no_log: true
+
+- name: Require scenario credentials to be present in their containers
+  ansible.builtin.assert:
+    that:
+      - live_test_token | length > 0
+      - live_superuser_password | length > 0
+      - live_openbao_root_token | length > 0
+    fail_msg: A scenario credential is missing from its container configuration.
+    quiet: true
+  no_log: true

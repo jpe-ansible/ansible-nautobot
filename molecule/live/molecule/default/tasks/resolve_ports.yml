@@ -1,0 +1,39 @@
+---
+# Docker may choose a new host port when a published container restarts, so
+# the endpoints are resolved again after every restart.
+- name: Inspect published service ports
+  community.docker.docker_container_info:
+    name: "{{ item.name }}"
+  loop:
+    - name: "{{ live_nautobot_name }}"
+      port: 8080
+    - name: "{{ live_proxmox_name }}"
+      port: 443
+    - name: "{{ live_openbao_name }}"
+      port: 8200
+  loop_control:
+    label: "{{ item.name }}"
+  register: live_service_containers
+  no_log: true
+
+- name: Save dynamically selected service ports
+  ansible.builtin.set_fact:
+    live_nautobot_host_port: >-
+      {{ live_service_containers.results[0].container.NetworkSettings.Ports['8080/tcp'][0].HostPort }}
+    live_proxmox_host_port: >-
+      {{ live_service_containers.results[1].container.NetworkSettings.Ports['443/tcp'][0].HostPort }}
+    live_openbao_host_port: >-
+      {{ live_service_containers.results[2].container.NetworkSettings.Ports['8200/tcp'][0].HostPort }}
+
+- name: Save ephemeral service endpoints
+  ansible.builtin.copy:
+    dest: "{{ live_state_dir }}/endpoints.yml"
+    mode: "0600"
+    content: |
+      live_nautobot_url: http://127.0.0.1:{{ live_nautobot_host_port }}
+      live_proxmox_api_url: https://127.0.0.1:{{ live_proxmox_host_port }}
+      live_openbao_addr: http://127.0.0.1:{{ live_openbao_host_port }}
+
+- name: Load ephemeral service endpoints
+  ansible.builtin.include_vars:
+    file: "{{ live_state_dir }}/endpoints.yml"

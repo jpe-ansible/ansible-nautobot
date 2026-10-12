@@ -1,0 +1,197 @@
+---
+- name: Read VirtualMachine identity and adoption fields after the live sync
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/graphql/"
+    method: POST
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      query: |
+        query {
+          virtual_machines {
+            id name custom_field_data: _custom_field_data
+          }
+        }
+    status_code: 200
+    return_content: true
+  register: live_adoption_graphql
+  no_log: true
+
+- name: Assert the unowned VM seed was adopted without replacing its identity
+  ansible.builtin.assert:
+    that:
+      - live_adoption_graphql.json.errors | default([]) | length == 0
+      - >-
+        live_adoption_graphql.json.data.virtual_machines
+        | selectattr('name', 'equalto', 'guest-1') | list | length == 1
+      - >-
+        (live_adoption_graphql.json.data.virtual_machines
+         | selectattr('name', 'equalto', 'guest-1') | first).id == live_adopted_vm_id
+      - >-
+        (live_adoption_graphql.json.data.virtual_machines
+         | selectattr('name', 'equalto', 'guest-1') | first).custom_field_data.sync_source == 'proxmox'
+      - >-
+        (live_adoption_graphql.json.data.virtual_machines
+         | selectattr('name', 'equalto', 'guest-1') | first).custom_field_data.vmid == 101
+    fail_msg: The live sync did not adopt exactly the seeded VirtualMachine identity and VMID.
+
+- name: Prove duplicate exact-name adoption fails for the named VirtualMachine
+  block:
+    - name: Create a second same-name VirtualMachine in the separate cluster
+      ansible.builtin.uri:
+        url: "{{ live_nautobot_url }}/api/virtualization/virtual-machines/"
+        method: POST
+        headers:
+          Authorization: "Token {{ live_test_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          name: guest-1
+          cluster: "{{ live_foreign_cluster_id }}"
+          role: "{{ live_adoption_role_id }}"
+          status: "{{ live_active_status_id }}"
+        status_code: 201
+        return_content: true
+      register: live_duplicate_vm_create
+      no_log: true
+
+    - name: Record the duplicate identity for guaranteed cleanup
+      ansible.builtin.set_fact:
+        live_duplicate_vm_id: "{{ live_duplicate_vm_create.json.id }}"
+
+    - name: Plan with the duplicate exact-name VirtualMachine
+      ansible.builtin.include_tasks: run_virtualization_plan.yml
+
+    - name: Fail if duplicate-name adoption is accepted
+      ansible.builtin.fail:
+        msg: Duplicate-name adoption was accepted.
+  rescue:
+    - name: Assert duplicate-name adoption fails with its reason and name
+      ansible.builtin.assert:
+        that:
+          - "'multiple exact-name matches' in (ansible_failed_result | to_json)"
+          - "'guest-1' in (ansible_failed_result | to_json)"
+        fail_msg: Duplicate-name adoption did not fail for guest-1 because of multiple exact-name matches.
+  always:
+    - name: Remove the duplicate VirtualMachine after the negative check
+      ansible.builtin.uri:
+        url: "{{ live_nautobot_url }}/api/virtualization/virtual-machines/{{ live_duplicate_vm_id }}/"
+        method: DELETE
+        headers:
+          Authorization: "Token {{ live_test_token }}"
+        status_code: 204
+      when: live_duplicate_vm_id is defined
+      no_log: true
+
+- name: Confirm duplicate-name cleanup preserved the adopted VirtualMachine
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/virtualization/virtual-machines/?name=guest-1"
+    method: GET
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+    status_code: 200
+    return_content: true
+  register: live_guest_1_after_duplicate_cleanup
+  no_log: true
+
+- name: Assert duplicate-name cleanup leaves one exact-name VirtualMachine
+  ansible.builtin.assert:
+    that:
+      - live_guest_1_after_duplicate_cleanup.json.count == 1
+      - live_guest_1_after_duplicate_cleanup.json.results[0].id == live_adopted_vm_id
+    fail_msg: Duplicate-name cleanup did not preserve exactly the adopted VirtualMachine.
+
+- name: Read the source guest before the cross-cluster adoption check
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/virtualization/virtual-machines/?name=guest-2"
+    method: GET
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+    status_code: 200
+    return_content: true
+  register: live_guest_2_before_cluster_check
+  no_log: true
+
+- name: Require one source guest before changing its cluster for the check
+  ansible.builtin.assert:
+    that:
+      - live_guest_2_before_cluster_check.json.count == 1
+    fail_msg: The cross-cluster check requires exactly one source guest named guest-2.
+
+- name: Prove a matching VirtualMachine in a different Cluster is rejected
+  block:
+    - name: Temporarily move the source guest to the separate cluster
+      ansible.builtin.uri:
+        url: >-
+          {{ live_nautobot_url }}/api/virtualization/virtual-machines/{{
+          live_guest_2_before_cluster_check.json.results[0].id }}/
+        method: PATCH
+        headers:
+          Authorization: "Token {{ live_test_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          cluster: "{{ live_foreign_cluster_id }}"
+          custom_fields:
+            sync_source: curated
+        status_code: 200
+      no_log: true
+
+    - name: Plan with the matching VirtualMachine in a different Cluster
+      ansible.builtin.include_tasks: run_virtualization_plan.yml
+
+    - name: Fail if cross-cluster adoption is accepted
+      ansible.builtin.fail:
+        msg: Cross-cluster adoption was accepted.
+  rescue:
+    - name: Assert cross-cluster adoption fails with its reason and name
+      ansible.builtin.assert:
+        that:
+          - "'guest-2' in (ansible_failed_result | to_json)"
+          - "'differs from live cluster' in (ansible_failed_result | to_json)"
+        fail_msg: Cross-cluster adoption did not fail for guest-2 because its Cluster differed.
+  always:
+    - name: Restore the source guest to its original Cluster
+      ansible.builtin.uri:
+        url: >-
+          {{ live_nautobot_url }}/api/virtualization/virtual-machines/{{
+          live_guest_2_before_cluster_check.json.results[0].id }}/
+        method: PATCH
+        headers:
+          Authorization: "Token {{ live_test_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          cluster: "{{ live_adoption_cluster_id }}"
+          custom_fields:
+            sync_source: proxmox
+        status_code: 200
+      no_log: true
+
+- name: Confirm the source guest returned to its original Cluster
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/virtualization/virtual-machines/?name=guest-2"
+    method: GET
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+    status_code: 200
+    return_content: true
+  register: live_guest_2_after_cluster_check
+  no_log: true
+
+- name: Assert cross-cluster cleanup restores the source guest
+  ansible.builtin.assert:
+    that:
+      - live_guest_2_after_cluster_check.json.count == 1
+      - live_guest_2_after_cluster_check.json.results[0].cluster.id == live_adoption_cluster_id
+    fail_msg: Cross-cluster cleanup did not restore guest-2 to its original Cluster.
+
+- name: Remove the temporary cluster used by adoption rejection checks
+  networktocode.nautobot.cluster:
+    url: "{{ live_nautobot_url }}"
+    token: "{{ live_test_token }}"
+    name: foreign-cluster
+    state: absent
+  no_log: true

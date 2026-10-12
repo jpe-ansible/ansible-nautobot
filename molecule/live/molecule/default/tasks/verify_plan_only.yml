@@ -1,0 +1,127 @@
+---
+- name: Restore the live source fixture before the no-op plan
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/fixtures/proxmox/api/"
+    dest: "{{ live_state_dir }}/proxmox/"
+    mode: "0644"
+
+- name: Read object counts before the no-op plan
+  ansible.builtin.include_tasks: read_counts.yml
+  vars:
+    live_counts_fact: live_plan_initial_counts
+
+- name: Plan both inbound stages without a write token
+  ansible.builtin.include_tasks: run_plan.yml
+  vars:
+    live_plan_module_quantity: 2
+
+- name: Assert the no-op plan has no changes
+  ansible.builtin.assert:
+    that:
+      - sync_in_plan | dict2items | map(attribute='value.create') | map('length') | sum == 0
+      - sync_in_plan | dict2items | map(attribute='value.update') | map('length') | sum == 0
+      - sync_in_plan | dict2items | map(attribute='value.delete') | map('length') | sum == 0
+      - >-
+        sync_in_plan.virtualization['adoptions']
+        | selectattr('existing_object.id', 'equalto', live_adopted_vm_id) | list | length == 1
+      - >-
+        (sync_in_plan.virtualization['adoptions']
+         | selectattr('existing_object.id', 'equalto', live_adopted_vm_id) | first).live_vmid == 101
+    fail_msg: "the live object snapshot produced changes in the plan-only run: {{ sync_in_plan | to_json }}"
+
+- name: Read object counts after the no-op plan
+  ansible.builtin.include_tasks: read_counts.yml
+  vars:
+    live_counts_fact: live_plan_initial_after_counts
+
+- name: Assert the no-op plan left GraphQL family counts unchanged
+  ansible.builtin.assert:
+    that:
+      - live_plan_initial_counts == live_plan_initial_after_counts
+    fail_msg: "the no-op plan changed the live GraphQL object counts"
+
+- name: Find the first live guest
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/virtualization/virtual-machines/?name=guest-1"
+    method: GET
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+    status_code: 200
+    return_content: true
+  register: live_plan_guest
+  no_log: true
+
+- name: Change a source-owned custom field outside the role
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/virtualization/virtual-machines/{{ live_plan_guest.json.results[0].id }}/"
+    method: PATCH
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+    body_format: json
+    body:
+      custom_fields:
+        current_node: drifted-node
+    status_code: 200
+  no_log: true
+
+- name: Plan after the out-of-band change
+  ansible.builtin.include_tasks: run_plan.yml
+  vars:
+    live_plan_module_quantity: 2
+
+- name: Assert the plan reports the changed field as an update and nothing else
+  ansible.builtin.assert:
+    that:
+      - sync_in_plan.virtualization['update'] | length == 1
+      - sync_in_plan.virtualization['update'][0].identifier is search('guest-1')
+      - >-
+        sync_in_plan.virtualization['update'][0].changed_fields['custom_fields.current_node']
+        == {'old': 'drifted-node', 'new': 'mapped-node-a'}
+      - sync_in_plan.virtualization.create | length == 0
+      - sync_in_plan.virtualization.delete | length == 0
+    fail_msg: "the plan did not report the out-of-band current_node change as one update"
+
+- name: Copy the removed source overlay before the removal plan
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/fixtures/proxmox/removed/"
+    dest: "{{ live_state_dir }}/proxmox/"
+    mode: "0644"
+
+- name: Read object counts before the removal plan
+  ansible.builtin.include_tasks: read_counts.yml
+  vars:
+    live_counts_fact: live_plan_removed_counts
+
+- name: Plan both inbound stages against the removal overlay
+  ansible.builtin.include_tasks: run_plan.yml
+  vars:
+    live_plan_module_quantity: 1
+
+- name: Assert the removal plan lists the missing guest, drive, and module
+  ansible.builtin.assert:
+    that:
+      - >-
+        sync_in_plan.virtualization.delete | selectattr('object_kind', 'equalto', 'virtual_machine')
+        | map(attribute='identifier') | select('search', 'guest-3') | list | length == 1
+      - >-
+        sync_in_plan.drives.delete | selectattr('object_kind', 'equalto', 'inventory_item')
+        | map(attribute='identifier') | select('search', 'Drive test-node-b-02') | list | length == 1
+      - >-
+        sync_in_plan.hardware.delete | selectattr('object_kind', 'equalto', 'module')
+        | map(attribute='identifier') | select('search', 'MODULE-LIVE#2') | list | length == 1
+      - >-
+        sync_in_plan | dict2items | map(attribute='value.delete') | flatten
+        | selectattr('identifier', 'equalto', '198.51.100.30/32') | list | length == 0
+    fail_msg: >-
+      the removal plan omitted a missing guest, drive, or surplus module, or listed the foreign address for deletion
+
+- name: Read object counts after the removal plan
+  ansible.builtin.include_tasks: read_counts.yml
+  vars:
+    live_counts_fact: live_plan_removed_after_counts
+
+- name: Assert the removal plan left GraphQL family counts unchanged
+  ansible.builtin.assert:
+    that:
+      - live_plan_removed_counts == live_plan_removed_after_counts
+    fail_msg: "the removal plan changed the live GraphQL object counts"

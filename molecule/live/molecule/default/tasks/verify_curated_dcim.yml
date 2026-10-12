@@ -1,0 +1,52 @@
+---
+- name: Read curated Rack and Device placement through GraphQL
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/graphql/"
+    method: POST
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      query: |
+        query {
+          racks { name custom_field_data: _custom_field_data }
+          devices {
+            name rack { name } position face device_type { model u_height }
+          }
+        }
+    status_code: 200
+    return_content: true
+  register: live_curated_dcim_graphql
+  no_log: true
+
+- name: Assert curated Rack and Device placement
+  ansible.builtin.assert:
+    that:
+      - live_curated_dcim_graphql.json.errors | default([]) | length == 0
+      - >-
+        live_curated_dcim_graphql.json.data.racks
+        | selectattr('name', 'equalto', 'Live Rack') | list | length == 1
+      - >-
+        (live_curated_dcim_graphql.json.data.racks
+         | selectattr('name', 'equalto', 'Live Rack') | first).custom_field_data.sync_source == 'curated'
+      - >-
+        live_curated_dcim_graphql.json.data.devices
+        | selectattr('name', 'equalto', 'live-curated-device') | list | length == 1
+      - >-
+        (live_curated_dcim_graphql.json.data.devices
+         | selectattr('name', 'equalto', 'live-curated-device') | first).rack.name == 'Live Rack'
+      - >-
+        (live_curated_dcim_graphql.json.data.devices
+         | selectattr('name', 'equalto', 'live-curated-device') | first).position == 7
+      - >-
+        (live_curated_dcim_graphql.json.data.devices
+         | selectattr('name', 'equalto', 'live-curated-device') | first).face == 'FRONT'
+      - >-
+        (live_curated_dcim_graphql.json.data.devices
+         | selectattr('name', 'equalto', 'live-curated-device') | first).device_type.u_height == 4
+      - >-
+        live_curated_dcim_graphql.json.data.devices
+        | selectattr('name', 'equalto', 'live-node-role-row') | list | length == 0
+    fail_msg: >-
+      Curated DCIM placement, ownership, or node-role exclusion did not match.

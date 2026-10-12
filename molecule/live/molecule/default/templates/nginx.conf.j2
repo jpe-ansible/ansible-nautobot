@@ -1,0 +1,40 @@
+log_format nautobot_hec escape=json '{"body":"$request_body"}';
+
+server {
+    listen 443 ssl;
+    server_name localhost 127.0.0.1;
+
+    default_type application/json;
+    access_log /dev/stdout;
+    ssl_certificate /etc/nginx/test-tls/server.crt;
+    ssl_certificate_key /etc/nginx/test-tls/server.key;
+    root /usr/share/nginx/html;
+
+    location = /services/collector/event {
+        client_body_in_single_buffer on;
+        access_log /var/log/nginx/hec/events.jsonl nautobot_hec;
+        add_header X-Observed-Authorization $http_authorization always;
+        proxy_set_header Authorization "";
+        proxy_pass http://127.0.0.1:8080/internal-hec-response;
+    }
+
+    location /api2/json/ {
+        limit_except GET {
+            deny all;
+        }
+        try_files $uri.json =404;
+    }
+
+    location / {
+        return 404;
+    }
+}
+
+server {
+    listen 127.0.0.1:8080;
+
+    location = /internal-hec-response {
+        default_type application/json;
+        return 200 '{"text":"Success","code":0}';
+    }
+}

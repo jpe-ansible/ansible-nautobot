@@ -1,0 +1,156 @@
+---
+- name: Load the expanded node inventory into the Proxmox API mock
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/fixtures/proxmox/node-management-nodes.json"
+    dest: "{{ live_state_dir }}/proxmox/api2/json/nodes.json"
+    mode: "0644"
+
+- name: Load the per-node version and network answers for the added nodes
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/fixtures/proxmox/node-management/nodes/"
+    dest: "{{ live_state_dir }}/proxmox/api2/json/nodes/"
+    mode: "0644"
+    directory_mode: "0755"
+
+- name: Synchronize commissioned nodes with one missing reservation
+  ansible.builtin.include_tasks: run_node_management.yml
+  vars:
+    live_node_plan_only: false
+
+- name: Read Device management bindings after the node sync
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/graphql/"
+    method: POST
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      query: |
+        query {
+          devices {
+            name primary_ip4 { address }
+            interfaces { name mgmt_only ip_addresses { address } }
+          }
+        }
+    status_code: 200
+    return_content: true
+  register: live_node_management_graphql
+  no_log: true
+
+- name: Assert commissioned node bindings and commissioning state
+  ansible.builtin.assert:
+    that:
+      - live_node_management_graphql.json.errors | default([]) | length == 0
+      - >-
+        (live_node_management_graphql.json.data.devices
+         | selectattr('name', 'equalto', 'mapped-node-a') | first).primary_ip4.address == '192.0.2.240/32'
+      - >-
+        (live_node_management_graphql.json.data.devices
+         | selectattr('name', 'equalto', 'mapped-node-a') | first).interfaces
+        | selectattr('name', 'equalto', 'mgmt') | map(attribute='mgmt_only') | first
+      - >-
+        (live_node_management_graphql.json.data.devices
+         | selectattr('name', 'equalto', 'mapped-node-a') | first).interfaces
+        | selectattr('name', 'equalto', 'mgmt') | map(attribute='ip_addresses') | first
+        | map(attribute='address') | list == ['192.0.2.240/32']
+      - >-
+        (live_node_management_graphql.json.data.devices
+         | selectattr('name', 'equalto', 'node-b') | first).primary_ip4.address == '198.51.100.240/32'
+      - >-
+        (live_node_management_graphql.json.data.devices
+         | selectattr('name', 'equalto', 'node-b') | first).interfaces
+        | selectattr('name', 'equalto', 'mgmt') | map(attribute='mgmt_only') | first
+      - >-
+        (live_node_management_graphql.json.data.devices
+         | selectattr('name', 'equalto', 'node-b') | first).interfaces
+        | selectattr('name', 'equalto', 'mgmt') | map(attribute='ip_addresses') | first
+        | map(attribute='address') | list == ['198.51.100.240/32']
+      - >-
+        live_node_management_graphql.json.data.devices
+        | selectattr('name', 'equalto', 'node-c') | list | length == 0
+      - >-
+        live_node_management_graphql.json.data.devices
+        | selectattr('name', 'equalto', 'node-d') | list | length == 1
+      - >-
+        (live_node_management_graphql.json.data.devices
+         | selectattr('name', 'equalto', 'node-d') | first).primary_ip4 is none
+      - >-
+        (live_node_management_graphql.json.data.devices
+         | selectattr('name', 'equalto', 'node-d') | first).interfaces
+        | selectattr('name', 'equalto', 'mgmt') | map(attribute='ip_addresses') | first | length == 0
+    fail_msg: Commissioned node bindings or commissioning state did not match the node map and reservations.
+
+- name: Plan the node map with one missing reservation
+  ansible.builtin.include_tasks: run_node_management.yml
+  vars:
+    live_node_plan_only: true
+
+- name: Assert the missing commissioned reservation appears in the plan
+  ansible.builtin.assert:
+    that:
+      - >-
+        sync_in_plan.nodes['unbound_nodes'] == [
+          {'name': 'node-d', 'management_dns_name': 'node-d'}
+        ]
+    fail_msg: The node plan did not report the commissioned node with no matching reservation.
+
+- name: Prove plan-only fails when every commissioned node lacks a reservation
+  block:
+    - name: Plan with no matching management reservation for commissioned nodes
+      ansible.builtin.include_tasks: run_node_management.yml
+      vars:
+        live_node_plan_only: true
+        live_node_map_override: >-
+          {{ live_pve_node_map
+             | map('combine', {'management_dns_name': 'missing-reservation'}) | list }}
+
+    - name: Fail if the all-missing reservation plan is accepted
+      ansible.builtin.fail:
+        msg: The plan accepted a node map with every commissioned reservation missing.
+  rescue:
+    - name: Assert the all-missing reservation guard names its failure
+      ansible.builtin.assert:
+        that:
+          - "'Proxmox node management binding failed' in (ansible_failed_result | to_json)"
+          - "'all 3 commissioned nodes' in (ansible_failed_result | to_json)"
+        fail_msg: The all-missing node plan did not fail with the management binding message.
+
+- name: Restore the original Proxmox node fixture
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/fixtures/proxmox/api/api2/json/nodes.json"
+    dest: "{{ live_state_dir }}/proxmox/api2/json/nodes.json"
+    mode: "0644"
+
+- name: Reconcile the original commissioned node set and remove the test Device
+  ansible.builtin.include_tasks: run_node_management.yml
+  vars:
+    live_node_plan_only: false
+
+- name: Read Devices after node test cleanup
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/graphql/"
+    method: POST
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      query: |
+        query { devices { name } }
+    status_code: 200
+    return_content: true
+  register: live_node_cleanup_graphql
+  no_log: true
+
+- name: Assert temporary test Devices were removed
+  ansible.builtin.assert:
+    that:
+      - live_node_cleanup_graphql.json.errors | default([]) | length == 0
+      - >-
+        live_node_cleanup_graphql.json.data.devices
+        | selectattr('name', 'equalto', 'node-c') | list | length == 0
+      - >-
+        live_node_cleanup_graphql.json.data.devices
+        | selectattr('name', 'equalto', 'node-d') | list | length == 0
+    fail_msg: The node-only test left a Device from the temporary node inventory.

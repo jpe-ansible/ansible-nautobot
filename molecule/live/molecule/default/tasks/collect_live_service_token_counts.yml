@@ -1,0 +1,28 @@
+---
+- name: Read each service account token list for hygiene assertions
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/users/tokens/"
+    method: GET
+    headers:
+      Authorization: "Token {{ item.value.token }}"
+      Accept: application/json
+    status_code: [200, 401, 403, 404]
+    return_content: true
+  loop: "{{ live_service_account_values | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: live_service_token_lists
+  no_log: true
+
+- name: Reset the service account token count summary
+  ansible.builtin.set_fact:
+    live_service_token_counts: {}
+
+- name: Save service account token counts
+  ansible.builtin.set_fact:
+    live_service_token_counts: >-
+      {{ live_service_token_counts | combine({item.item.key: item.json.count | default(0) | int}) }}
+  loop: "{{ live_service_token_lists.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  no_log: true

@@ -49,6 +49,16 @@ jobs:
           - 'roles/url_guard/**'
           - 'molecule/url_guard/**'
           - 'requirements*'
+        live:
+          - 'roles/server/defaults/**'
+          - 'roles/sync_in/**'
+          - 'roles/sync_out/**'
+          - 'roles/preflight/**'
+          - 'roles/drift/**'
+          - 'roles/url_guard/**'
+          - 'global_settings.yml'
+          - 'molecule/live/**'
+          - 'requirements*'
 
   molecule:
     name: Molecule

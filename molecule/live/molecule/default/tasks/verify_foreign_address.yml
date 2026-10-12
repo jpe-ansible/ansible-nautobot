@@ -1,0 +1,50 @@
+---
+- name: Read the preexisting foreign guest address through REST
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/ipam/ip-addresses/?address=198.51.100.30%2F32"
+    method: GET
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+    status_code: 200
+    return_content: true
+  register: live_foreign_address_initial
+  no_log: true
+
+- name: Read the guest interface address association through GraphQL
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/graphql/"
+    method: POST
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      query: |
+        query {
+          virtual_machines {
+            name interfaces { name ip_addresses { address custom_field_data: _custom_field_data } }
+          }
+        }
+    status_code: 200
+    return_content: true
+  register: live_foreign_address_graphql
+  no_log: true
+
+- name: Assert the foreign address is associated without changing its description or ownership
+  ansible.builtin.assert:
+    that:
+      - live_foreign_address_initial.json.count == 1
+      - >-
+        live_foreign_address_initial.json.results[0].description
+        == 'Foreign address retained by the live scenario'
+      - >-
+        (live_foreign_address_initial.json.results[0].custom_fields | default({}, true)).sync_source
+        | default('', true) == ''
+      - live_foreign_address_graphql.json.errors | default([]) | length == 0
+      - >-
+        live_foreign_address_graphql.json.data.virtual_machines
+        | selectattr('name', 'equalto', 'guest-3') | map(attribute='interfaces') | flatten
+        | map(attribute='ip_addresses') | flatten | map(attribute='address') | list
+        | select('equalto', '198.51.100.30/32') | list | length == 1
+    fail_msg: >-
+      The foreign address lost its description, ownership state, or guest interface association.

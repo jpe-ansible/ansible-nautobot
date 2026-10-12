@@ -1,0 +1,150 @@
+---
+- name: Create disposable Nautobot services
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Load live scenario variables
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/vars/live.yml"
+
+    - name: Load Nautobot server defaults
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../../roles/server/defaults/main.yml"
+        name: live_server_defaults
+
+    - name: Set the Nautobot image from the server role version
+      ansible.builtin.set_fact:
+        live_nautobot_image: "{{ live_nautobot_image_repository }}:{{ live_server_defaults.server_version }}"
+
+    - name: Create private scenario state directory
+      ansible.builtin.file:
+        path: "{{ live_state_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Generate in-memory scenario credentials
+      ansible.builtin.set_fact:
+        live_test_token: >-
+          {{ lookup('ansible.builtin.password', '/dev/null length=40 chars=ascii_lowercase,digits') }}
+        live_database_password: >-
+          {{ lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits') }}
+        live_nautobot_secret_key: >-
+          {{ lookup('ansible.builtin.password', '/dev/null length=50 chars=ascii_letters,digits') }}
+        live_superuser_password: >-
+          {{ lookup('ansible.builtin.password', '/dev/null length=32 chars=ascii_letters,digits') }}
+        live_openbao_root_token: >-
+          {{ lookup('ansible.builtin.password', '/dev/null length=40 chars=ascii_lowercase,digits') }}
+      no_log: true
+
+    - name: Create isolated scenario network
+      community.docker.docker_network:
+        name: "{{ live_network_name }}"
+        state: present
+        labels:
+          io.dryvist.molecule.scenario: "{{ live_owner_value }}"
+
+    - name: Pull pinned test images
+      community.docker.docker_image:
+        name: "{{ item.image }}"
+        source: pull
+      loop:
+        - name: PostgreSQL
+          image: "{{ live_postgres_image }}"
+        - name: Redis
+          image: "{{ live_redis_image }}"
+        - name: Nautobot
+          image: "{{ live_nautobot_image }}"
+        - name: Proxmox API mock
+          image: "{{ live_nginx_image }}"
+        - name: OpenBao secret store
+          image: "{{ live_openbao_image }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: live_image_pulls
+      retries: 1
+      delay: 5
+      until: live_image_pulls is succeeded
+
+    - name: Start PostgreSQL
+      community.docker.docker_container:
+        name: "{{ live_postgres_name }}"
+        image: "{{ live_postgres_image }}"
+        state: healthy
+        healthy_wait_timeout: 90
+        networks:
+          - name: "{{ live_network_name }}"
+        labels:
+          io.dryvist.molecule.scenario: "{{ live_owner_value }}"
+        env:
+          POSTGRES_DB: nautobot
+          POSTGRES_USER: nautobot
+          POSTGRES_PASSWORD: "{{ live_database_password }}"
+        healthcheck:
+          test: [CMD-SHELL, "pg_isready -U nautobot -d nautobot"]
+          interval: 2s
+          timeout: 3s
+          retries: 30
+      no_log: true
+
+    - name: Start Redis
+      community.docker.docker_container:
+        name: "{{ live_redis_name }}"
+        image: "{{ live_redis_image }}"
+        state: healthy
+        healthy_wait_timeout: 90
+        networks:
+          - name: "{{ live_network_name }}"
+        labels:
+          io.dryvist.molecule.scenario: "{{ live_owner_value }}"
+        healthcheck:
+          test: [CMD, redis-cli, ping]
+          interval: 2s
+          timeout: 3s
+          retries: 30
+
+    - name: Start the disposable OpenBao secret store
+      community.docker.docker_container:
+        name: "{{ live_openbao_name }}"
+        image: "{{ live_openbao_image }}"
+        command: server -dev
+        state: started
+        networks:
+          - name: "{{ live_network_name }}"
+        labels:
+          io.dryvist.molecule.scenario: "{{ live_owner_value }}"
+        published_ports:
+          - 127.0.0.1::8200
+        env:
+          BAO_DEV_ROOT_TOKEN_ID: "{{ live_openbao_root_token }}"
+          BAO_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      no_log: true
+
+    - name: Start Nautobot
+      community.docker.docker_container:
+        name: "{{ live_nautobot_name }}"
+        image: "{{ live_nautobot_image }}"
+        state: started
+        networks:
+          - name: "{{ live_network_name }}"
+        labels:
+          io.dryvist.molecule.scenario: "{{ live_owner_value }}"
+        published_ports:
+          - 127.0.0.1::8080
+        env:
+          NAUTOBOT_ALLOWED_HOSTS: 127.0.0.1 localhost
+          NAUTOBOT_CREATE_SUPERUSER: "true"
+          NAUTOBOT_DB_HOST: "{{ live_postgres_name }}"
+          NAUTOBOT_DB_NAME: nautobot
+          NAUTOBOT_DB_PASSWORD: "{{ live_database_password }}"
+          NAUTOBOT_DB_PORT: "5432"
+          NAUTOBOT_DB_USER: nautobot
+          NAUTOBOT_DOCKER_SKIP_INIT: "false"
+          NAUTOBOT_REDIS_HOST: "{{ live_redis_name }}"
+          NAUTOBOT_REDIS_PORT: "6379"
+          NAUTOBOT_SECRET_KEY: "{{ live_nautobot_secret_key }}"
+          NAUTOBOT_SUPERUSER_API_TOKEN: "{{ live_test_token }}"
+          NAUTOBOT_SUPERUSER_EMAIL: test-admin@example.invalid
+          NAUTOBOT_SUPERUSER_NAME: test-admin
+          NAUTOBOT_SUPERUSER_PASSWORD: "{{ live_superuser_password }}"
+      no_log: true

@@ -1,0 +1,1 @@
+{"data":[{"node":"node-a","status":"online","maxmem":8589934592,"maxcpu":8},{"node":"node-b","status":"online","maxmem":4294967296,"maxcpu":4},{"node":"node-c","status":"online","maxmem":8589934592,"maxcpu":8},{"node":"node-d","status":"online","maxmem":8589934592,"maxcpu":8}]}

@@ -1,0 +1,42 @@
+---
+# Reads the object family counts through one GraphQL query and stores them in the fact named by live_counts_fact.
+- name: Read object family rows
+  ansible.builtin.uri:
+    url: "{{ live_nautobot_url }}/api/graphql/"
+    method: POST
+    headers:
+      Authorization: "Token {{ live_test_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      query: |
+        query {
+          clusters { name }
+          devices { name }
+          virtual_machines { name interfaces { name } }
+          ip_addresses { address }
+          inventory_items { name }
+          racks { name }
+          modules { asset_tag }
+          module_bays { name }
+          providers { name }
+          circuits { cid }
+          vlans { vid }
+          prefixes { prefix }
+        }
+    status_code: 200
+    return_content: true
+  register: live_count_rows
+  no_log: true
+
+- name: Assert the object family query returned no errors
+  ansible.builtin.assert:
+    that:
+      - live_count_rows.json.errors | default([]) | length == 0
+    quiet: true
+
+- name: Store the object family counts
+  ansible.builtin.set_fact:
+    "{{ live_counts_fact }}": >-
+      {{ dict(live_count_rows.json.data | dict2items | map(attribute='key')
+              | zip(live_count_rows.json.data | dict2items | map(attribute='value') | map('length'))) }}
