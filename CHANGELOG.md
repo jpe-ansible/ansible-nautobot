@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.2.0...v0.2.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **server:** render Bootstrap model selection as Python literals ([#14](https://github.com/jpe-ansible/ansible-nautobot/issues/14)) ([a818358](https://github.com/jpe-ansible/ansible-nautobot/commit/a8183583df8a061ce96946a7ac65ec0d5638eb2e))
+
 ## [0.2.0](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.1.0...v0.2.0) (2026-10-12)
 
 
