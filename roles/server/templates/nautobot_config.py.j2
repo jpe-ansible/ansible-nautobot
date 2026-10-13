@@ -46,7 +46,11 @@ PLUGINS_CONFIG = {
         "hide_example_jobs": True,
         "enable_bootstrap": True,
         "bootstrap_nautobot_environment_branch": {{ server_bootstrap_environment_branch | to_json }},
-        "bootstrap_models_to_sync": {{ server_bootstrap_models_to_sync | to_json }},
+        "bootstrap_models_to_sync": {
+{% for model, enabled in server_bootstrap_models_to_sync.items() %}
+            {{ model | to_json }}: {{ 'True' if enabled | bool else 'False' }},
+{% endfor %}
+        },
     },
     "nautobot_device_onboarding": {},
 }
