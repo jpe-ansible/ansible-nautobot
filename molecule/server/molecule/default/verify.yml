@@ -167,10 +167,21 @@
         that:
           - server_role_defaults.server_bootstrap_models_to_sync == server_bootstrap_expected_models
           - not server_role_defaults.server_bootstrap_models_to_sync.role | bool
+        fail_msg: Bootstrap model defaults differ from their documented selection.
+
+    # The settings file is Python, so the selection must render as True and
+    # False. JSON true and false are undefined names and stop Nautobot at start.
+    - name: Assert the Bootstrap model selection renders as Python literals
+      ansible.builtin.assert:
+        that:
           - >-
-            ('"bootstrap_models_to_sync": '
-            ~ (server_bootstrap_expected_models | to_json)) in server_rendered_config
-        fail_msg: Rendered Bootstrap model selection differs from its documented defaults.
+            ('"' ~ item.key ~ '": ' ~ ('True' if item.value else 'False') ~ ',')
+            in server_rendered_config
+          - server_rendered_config is not search(':\s+(true|false)\b')
+        fail_msg: Rendered Bootstrap model selection is not valid Python.
+      loop: "{{ server_bootstrap_expected_models | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
 
     - name: Assert settings include the UI host, apps, DB host, and Bootstrap keys
       ansible.builtin.assert:
