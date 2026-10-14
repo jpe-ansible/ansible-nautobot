@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.3.1...v0.4.0) (2026-10-14)
+
+
+### Features
+
+* **server:** make the SSoT Bootstrap integration opt-in ([4c8153c](https://github.com/jpe-ansible/ansible-nautobot/commit/4c8153c72a2be571fce0e175771bd90facefe9be))
+* **server:** make the SSoT Bootstrap integration opt-in ([3bb4886](https://github.com/jpe-ansible/ansible-nautobot/commit/3bb48868ff787c31dde38bf43161a251f62f87f5))
+
+
+### Bug Fixes
+
+* **server:** skip the return-code checks and web wait under check mode ([#24](https://github.com/jpe-ansible/ansible-nautobot/issues/24)) ([6ed22be](https://github.com/jpe-ansible/ansible-nautobot/commit/6ed22be386ba6d415e2d0cb649626d1931e17179))
+
 ## [0.3.1](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.3.0...v0.3.1) (2026-10-14)
 
 
