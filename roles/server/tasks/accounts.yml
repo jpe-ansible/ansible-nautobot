@@ -135,6 +135,8 @@
   delegate_to: localhost
   connection: local
   become: false
+  vars:
+    ansible_become: false
   no_log: true
   block:
     - name: Read the stored service account secrets from OpenBao

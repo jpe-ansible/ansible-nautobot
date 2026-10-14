@@ -151,6 +151,31 @@
           - server_superuser_tasks[0].get('when') is none
         fail_msg: Service account reconciliation is not guarded by server_manage_accounts.
 
+    - name: Read the controller-delegated task files
+      ansible.builtin.set_fact:
+        server_secret_key_tasks: >-
+          {{ lookup('ansible.builtin.file', server_tasks_dir ~ '/secret_key.yml') | from_yaml }}
+        server_accounts_tasks: >-
+          {{ lookup('ansible.builtin.file', server_tasks_dir ~ '/accounts.yml') | from_yaml }}
+      vars:
+        server_tasks_dir: "{{ playbook_dir }}/../../../../roles/server/tasks"
+      delegate_to: localhost
+      become: false
+
+    - name: Assert controller-delegated tasks disable become with the variable
+      ansible.builtin.assert:
+        that:
+          - server_delegated | length == 3
+          - server_delegated_off | length == server_delegated | length
+        fail_msg: A controller-delegated task must set the variable ansible_become to false, not only the keyword.
+      vars:
+        server_delegated: >-
+          {{ (server_secret_key_tasks + server_accounts_tasks)
+          | selectattr('delegate_to', 'defined') | selectattr('delegate_to', 'equalto', 'localhost') | list }}
+        server_delegated_off: >-
+          {{ server_delegated | selectattr('vars.ansible_become', 'defined')
+          | selectattr('vars.ansible_become', 'equalto', false) | list }}
+
     - name: Assert application management remains enabled by default and manages the first superuser
       ansible.builtin.assert:
         that:
