@@ -54,6 +54,14 @@ field only when it differs from the effective key, using KV v2 check-and-set aga
 sibling fields. An unchanged converge creates no new KV version, and a rebuilt host reuses the stored key. With
 `server_manage_app` false, the role does not read or write OpenBao.
 
+## Secrets and command lines
+
+Migration, post-upgrade and superuser commands source their environment from protected files instead of receiving secrets
+through an Ansible task environment or command arguments. `.nautobot-cmd-env.sh` contains the sorted `server_env` entries
+and stays on disk with mode `0600`, under the same trust boundary as `nautobot.env`; it is rendered on each run.
+`.nautobot-superuser-env.sh` contains the three `DJANGO_SUPERUSER_*` values with mode `0600` and is removed after the
+superuser command, including when that command fails.
+
 ## Running in stages
 
 A run with no tag filter does everything in one pass. Tags let a caller run the role as separate stages, for a runner
