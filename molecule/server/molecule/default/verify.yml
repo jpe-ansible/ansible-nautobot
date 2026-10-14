@@ -444,6 +444,7 @@
           - Resolve and persist the Nautobot SECRET_KEY
           - Render the Nautobot settings
           - Install Nautobot systemd units
+          - Record the package pins the services run and restart them when the pins changed
           - Apply pending Nautobot service handlers
           - Enable and start Nautobot services
           - Wait for the Nautobot web interface to answer
@@ -457,6 +458,7 @@
           - Resolve and persist the Nautobot SECRET_KEY
           - Run Nautobot database migrations
           - Render the Nautobot settings
+          - Record the package pins the services run and restart them when the pins changed
           - Enable and start Nautobot services
         absent: []
   tasks:

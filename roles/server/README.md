@@ -70,8 +70,9 @@ with a time limit per task:
 Run the stages in this order on an upgrade: the new settings and the service restart in stage 3 take effect only after
 stage 1 has installed the packages and stage 2 has migrated the database. Stage 1 replaces package files while the
 running services still hold the old code, and the restart in stage 3 loads the new code. Redis changes restart Redis
-inside stage 1, and configuration changes restart the services inside stage 3. A fresh host needs one run with no tag
-filter, because migrations need the settings file.
+inside stage 1, and configuration changes restart the services inside stage 3. Stage 3 also restarts the services when
+the package pins differ from the pins recorded at the last service restart, so a package-only upgrade loads the new
+code. A fresh host needs one run with no tag filter, because migrations need the settings file.
 
 ## Network exposure
 

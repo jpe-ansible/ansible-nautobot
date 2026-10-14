@@ -220,6 +220,15 @@
   become: true
   tags: [server_config]
   block:
+    - name: Record the package pins the services run and restart them when the pins changed
+      ansible.builtin.copy:
+        content: "{{ server_pip_packages | join(',') }}"
+        dest: "{{ server_root }}/.services_stamp"
+        owner: "{{ server_user }}"
+        group: "{{ server_group }}"
+        mode: "0644"
+      notify: Restart Nautobot services
+
     - name: Apply pending Nautobot service handlers
       ansible.builtin.meta: flush_handlers
 
