@@ -151,6 +151,26 @@
           - server_superuser_tasks[0].get('when') is none
         fail_msg: Service account reconciliation is not guarded by server_manage_accounts.
 
+    - name: Assert the return-code checks and the web wait are skipped under check mode
+      ansible.builtin.assert:
+        that:
+          - server_check_mode_tasks | length == server_check_mode_task_names | length
+          - server_check_mode_guarded | length == server_check_mode_task_names | length
+        fail_msg: A return-code check or the web wait runs under check mode, where its command or request is skipped.
+      vars:
+        server_check_mode_task_names:
+          - Report the migration return code
+          - Require successful database migrations
+          - Report the post-upgrade return code
+          - Require successful post-upgrade operations
+          - Wait for the Nautobot web interface to answer
+        server_check_mode_tasks: >-
+          {{ (server_migrate_block.get('block', []) + server_config_block.get('block', []))
+          | selectattr('name', 'in', server_check_mode_task_names) | list }}
+        server_check_mode_guarded: >-
+          {{ server_check_mode_tasks | map(attribute='when', default='') | map('string')
+          | select('search', 'not ansible_check_mode') | list }}
+
     - name: Assert application management remains enabled by default and manages the first superuser
       ansible.builtin.assert:
         that:
