@@ -65,6 +65,14 @@ sibling fields. An unchanged converge creates no new KV version, and a rebuilt h
 When enabled, `server_pip_packages` must include `nautobot-device-lifecycle-mgmt`, and `server_plugins` must include
 `nautobot_device_lifecycle_mgmt`.
 
+## Secrets and command lines
+
+Migration, post-upgrade and superuser commands source their environment from protected files instead of receiving secrets
+through an Ansible task environment or command arguments. `.nautobot-cmd-env.sh` contains the sorted `server_env` entries
+and stays on disk with mode `0600`, under the same trust boundary as `nautobot.env`; it is rendered on each run.
+`.nautobot-superuser-env.sh` contains the three `DJANGO_SUPERUSER_*` values with mode `0600` and is removed after the
+superuser command, including when that command fails.
+
 ## Running in stages
 
 A run with no tag filter does everything in one pass. Tags let a caller run the role as separate stages, for a runner
