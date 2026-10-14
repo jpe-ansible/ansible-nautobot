@@ -400,3 +400,77 @@
       vars:
         server_bind_lines: "{{ (server_override_renders.results[0].content | b64decode).splitlines() }}"
         server_untrusted_text: "{{ server_override_renders.results[1].content | b64decode }}"
+
+- name: Verify the stage tags select disjoint task sets
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    server_stage_prefix: "server : "
+    server_stage_cases:
+      - name: install
+        skip: server_secret,server_migrate,server_config
+        present:
+          - Install system packages, create the service account, and configure Redis
+          - Create the Nautobot virtual environment
+          - Install pinned Nautobot applications
+        absent:
+          - Resolve and persist the Nautobot SECRET_KEY
+          - Render the Nautobot settings
+          - Run Nautobot database migrations
+          - Enable and start Nautobot services
+      - name: migrate
+        skip: server_install,server_config
+        present:
+          - Resolve and persist the Nautobot SECRET_KEY
+          - Run Nautobot database migrations
+          - Ensure the first Nautobot superuser exists
+        absent:
+          - Create the Nautobot virtual environment
+          - Render the Nautobot settings
+          - Enable and start Nautobot services
+      - name: config
+        skip: server_install,server_migrate
+        present:
+          - Resolve and persist the Nautobot SECRET_KEY
+          - Render the Nautobot settings
+          - Install Nautobot systemd units
+          - Apply pending Nautobot service handlers
+          - Enable and start Nautobot services
+          - Wait for the Nautobot web interface to answer
+        absent:
+          - Install pinned Nautobot applications
+          - Run Nautobot database migrations
+      - name: full
+        skip: server_unused_tag
+        present:
+          - Install pinned Nautobot applications
+          - Resolve and persist the Nautobot SECRET_KEY
+          - Run Nautobot database migrations
+          - Render the Nautobot settings
+          - Enable and start Nautobot services
+        absent: []
+  tasks:
+    - name: List the role tasks for each stage
+      ansible.builtin.command:
+        cmd: "ansible-playbook -i localhost, --list-tasks --skip-tags {{ item.skip }} {{ playbook_dir }}/stage_tags.yml"
+      environment:
+        ANSIBLE_ROLES_PATH: "{{ playbook_dir }}/../../../../roles"
+      loop: "{{ server_stage_cases }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: server_stage_lists
+      changed_when: false
+
+    - name: Assert each stage lists exactly its own tasks
+      ansible.builtin.assert:
+        that:
+          - server_stage_present | select('in', item.1.stdout) | list | length == server_stage_present | length
+          - server_stage_absent | select('in', item.1.stdout) | list | length == 0
+        fail_msg: "Stage {{ item.0.name }} does not select the expected server role tasks."
+      vars:
+        server_stage_present: "{{ item.0.present | map('regex_replace', '^', server_stage_prefix) | list }}"
+        server_stage_absent: "{{ item.0.absent | map('regex_replace', '^', server_stage_prefix) | list }}"
+      loop: "{{ server_stage_cases | zip(server_stage_lists.results) | list }}"
+      loop_control:
+        label: "{{ item.0.name }}"
