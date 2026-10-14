@@ -21,6 +21,27 @@
       circuit: true
       vlan: true
       prefix: true
+    server_bootstrap_guard_cases:
+      - name: enabled without the DLM plugin
+        enabled: true
+        plugins: []
+        packages: ["nautobot-device-lifecycle-mgmt==1.0"]
+        rejected: true
+      - name: enabled without the DLM package
+        enabled: true
+        plugins: [nautobot_device_lifecycle_mgmt]
+        packages: []
+        rejected: true
+      - name: enabled with the DLM plugin and package
+        enabled: true
+        plugins: [nautobot_device_lifecycle_mgmt]
+        packages: ["nautobot-device-lifecycle-mgmt[extra]==1.0"]
+        rejected: false
+      - name: disabled without DLM
+        enabled: false
+        plugins: []
+        packages: []
+        rejected: false
   tasks:
     - name: Load the server role defaults for contract assertions
       ansible.builtin.include_vars:
@@ -205,6 +226,9 @@
           - server_role_specs.argument_specs.main.options.server_manage_accounts.default | bool
           - server_role_specs.argument_specs.main.options.server_manage_accounts.description
             == 'Reconcile Nautobot service accounts, permissions, tokens and published token fields.'
+          - not server_role_defaults.server_bootstrap_enabled | bool
+          - server_role_specs.argument_specs.main.options.server_bootstrap_enabled.type == 'bool'
+          - not server_role_specs.argument_specs.main.options.server_bootstrap_enabled.default | bool
         fail_msg: Account management defaults or its argument specification are missing.
 
     - name: Read the rendered Nautobot settings
@@ -216,6 +240,15 @@
       ansible.builtin.set_fact:
         server_rendered_config: "{{ server_config.content | b64decode }}"
 
+    - name: Parse the default Nautobot settings as Python
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - import ast,sys; ast.parse(open(sys.argv[1]).read())
+          - "{{ server_root }}/nautobot_config.py"
+      changed_when: false
+
     - name: Assert Bootstrap defaults match the documented model selection
       ansible.builtin.assert:
         that:
@@ -223,32 +256,29 @@
           - not server_role_defaults.server_bootstrap_models_to_sync.role | bool
         fail_msg: Bootstrap model defaults differ from their documented selection.
 
-    # The settings file is Python, so the selection must render as True and
-    # False. JSON true and false are undefined names and stop Nautobot at start.
-    - name: Assert the Bootstrap model selection renders as Python literals
-      ansible.builtin.assert:
-        that:
-          - >-
-            ('"' ~ item.key ~ '": ' ~ ('True' if item.value else 'False') ~ ',')
-            in server_rendered_config
-          - server_rendered_config is not search(':\s+(true|false)\b')
-        fail_msg: Rendered Bootstrap model selection is not valid Python.
-      loop: "{{ server_bootstrap_expected_models | dict2items }}"
-      loop_control:
-        label: "{{ item.key }}"
-
-    - name: Assert settings include the UI host, apps, DB host, and Bootstrap keys
+    - name: Assert settings include the UI host and apps but omit opt-in Bootstrap settings
       ansible.builtin.assert:
         that:
           - "server_ui_fqdn in server_rendered_config"
           - "'nautobot_ssot' in server_rendered_config"
           - "'nautobot_device_onboarding' in server_rendered_config"
           - "server_db_host in server_rendered_config"
-          - "'enable_bootstrap' in server_rendered_config"
-          - "'bootstrap_nautobot_environment_branch' in server_rendered_config"
-        fail_msg: Rendered settings are missing the server configuration contract.
+          - >-
+            ('"hide_example_jobs": True,') in server_rendered_config
+          - "'enable_bootstrap' not in server_rendered_config"
+          - "'bootstrap_nautobot_environment_branch' not in server_rendered_config"
+          - "'bootstrap_models_to_sync' not in server_rendered_config"
+        fail_msg: Rendered settings do not honor the default-off Bootstrap configuration.
       vars:
         server_rendered_config: "{{ server_config.content | b64decode }}"
+
+    - name: Exercise the Bootstrap dependency guard against each DLM configuration
+      ansible.builtin.include_tasks:
+        file: tasks/bootstrap_guard_case.yml
+      loop: "{{ server_bootstrap_guard_cases }}"
+      loop_control:
+        loop_var: server_bootstrap_guard_case
+        label: "{{ server_bootstrap_guard_case.name }}"
 
     - name: Stat the Nautobot environment file
       ansible.builtin.stat:
@@ -455,6 +485,61 @@
         server_bind_lines: "{{ (server_override_renders.results[0].content | b64decode).splitlines() }}"
         server_untrusted_text: "{{ server_override_renders.results[1].content | b64decode }}"
 
+    - name: Enable Bootstrap with its DLM dependencies for the settings render
+      ansible.builtin.set_fact:
+        server_bootstrap_enabled: true
+        server_plugins: "{{ server_plugins + ['nautobot_device_lifecycle_mgmt'] }}"
+        server_pip_packages: "{{ server_pip_packages + ['nautobot-device-lifecycle-mgmt[extra]==1.0'] }}"
+
+    - name: Render the settings with Bootstrap enabled
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../../../roles/server/templates/nautobot_config.py.j2"
+        dest: /tmp/nautobot_config-bootstrap-enabled.py
+        mode: "0600"
+
+    - name: Read the Bootstrap-enabled settings
+      ansible.builtin.slurp:
+        src: /tmp/nautobot_config-bootstrap-enabled.py
+      register: server_bootstrap_enabled_config_file
+
+    - name: Decode the Bootstrap-enabled settings
+      ansible.builtin.set_fact:
+        server_bootstrap_enabled_config: "{{ server_bootstrap_enabled_config_file.content | b64decode }}"
+
+    - name: Parse Bootstrap-enabled settings as Python
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - import ast,sys; ast.parse(open(sys.argv[1]).read())
+          - /tmp/nautobot_config-bootstrap-enabled.py
+      changed_when: false
+
+    - name: Assert Bootstrap settings and model selection render when enabled
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('"enable_bootstrap": True,') in server_bootstrap_enabled_config
+          - >-
+            'bootstrap_nautobot_environment_branch' in server_bootstrap_enabled_config
+          - >-
+            'bootstrap_models_to_sync' in server_bootstrap_enabled_config
+          - >-
+            'nautobot_device_lifecycle_mgmt' in server_bootstrap_enabled_config
+        fail_msg: Rendered settings omit enabled Bootstrap configuration or its DLM plugin.
+
+    - name: Assert the enabled Bootstrap model selection renders as Python literals
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('"' ~ item.key ~ '": ' ~ ('True' if item.value else 'False') ~ ',')
+            in server_bootstrap_enabled_config
+          - server_bootstrap_enabled_config is not search(':\s+(true|false)\b')
+        fail_msg: Rendered Bootstrap model selection is not valid Python.
+      loop: "{{ server_bootstrap_expected_models | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
 - name: Verify the stage tags select disjoint task sets
   hosts: localhost
   connection: local
@@ -531,10 +616,14 @@
       loop_control:
         label: "{{ item.0.name }}"
 
-    - name: Assert only the two input validation tasks carry no stage tag
+    - name: Assert the three validation tasks carry no stage tag
       ansible.builtin.assert:
         that:
-          - server_untagged | length == 2
+          - server_untagged | length == 3
+          - >-
+            server_untagged
+            | select('search', 'Require DLM when the SSoT Bootstrap integration is enabled')
+            | list | length == 1
           - server_untagged | select('search', 'Validate OpenBao and superuser inputs') | list | length == 1
           - server_untagged | select('search', 'Validate the database credential') | list | length == 1
         fail_msg: "Stage {{ item.item.name }} lists a server role task that has no stage tag."
