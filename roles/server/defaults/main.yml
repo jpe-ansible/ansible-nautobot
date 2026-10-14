@@ -27,6 +27,7 @@ server_pip_packages:
 server_plugins:
   - nautobot_ssot
   - nautobot_device_onboarding
+server_bootstrap_enabled: false
 server_bootstrap_environment_branch: develop
 server_bootstrap_models_to_sync:
   custom_field: true

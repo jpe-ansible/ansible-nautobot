@@ -33,6 +33,12 @@ argument_specs:
         type: list
         elements: str
         description: Nautobot application plugin names enabled in settings.
+      server_bootstrap_enabled:
+        type: bool
+        default: false
+        description: >-
+          Enable the SSoT Bootstrap integration. Requires nautobot-device-lifecycle-mgmt in server_pip_packages and
+          nautobot_device_lifecycle_mgmt in server_plugins.
       server_bootstrap_environment_branch:
         type: str
         description: SSoT Bootstrap environment branch configured in Nautobot.

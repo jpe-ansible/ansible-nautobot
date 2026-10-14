@@ -1,4 +1,7 @@
 ---
+- name: Validate SSoT Bootstrap dependencies before managing Nautobot
+  ansible.builtin.import_tasks: validate_bootstrap.yml
+
 - name: Validate OpenBao and superuser inputs when managing the application
   ansible.builtin.assert:
     that:

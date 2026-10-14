@@ -108,6 +108,9 @@ The two reads retry transient failures twice, 15 seconds apart. The writes that 
 replayed request can enqueue a second job; the next scheduled run repeats a failed stage. Check mode runs the reads
 and reports the plan without writing.
 
+The Bootstrap job exists only when the `server` role runs with `server_bootstrap_enabled: true` and the DLM package and
+plugin are installed.
+
 The data repository is described in `docs/bootstrap.md`.
 Set the `default` Git Repository branch in `develop.yml`; `sync_in_bootstrap_branch` defaults to that value and must
 match it. The Bootstrap plan does not list deletions performed by the integration.

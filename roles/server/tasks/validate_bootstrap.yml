@@ -1,0 +1,13 @@
+---
+- name: Require DLM when the SSoT Bootstrap integration is enabled
+  ansible.builtin.assert:
+    that:
+      - "'nautobot_device_lifecycle_mgmt' in server_plugins"
+      - >-
+        server_pip_packages
+        | select('match', '^nautobot-device-lifecycle-mgmt($|[=\\[ ])')
+        | list | length > 0
+    fail_msg: >-
+      Nautobot startup would fail with ImportError: cannot import name 'NautobotValidatedSoftware' from
+      nautobot_ssot.integrations.bootstrap.diffsync.models.nautobot; Bootstrap needs the DLM package and plugin.
+  when: server_bootstrap_enabled | bool

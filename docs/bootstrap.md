@@ -9,6 +9,8 @@ Create one Nautobot Git Repository named `Nautobot Bootstrap` that points at thi
 type `config contexts`. The `sync_in` role creates it, syncs it and runs the Bootstrap job. The setup guide requires the
 repository name to contain `Bootstrap` and the provided data type to include `config contexts`
 ([Bootstrap setup](https://docs.nautobot.com/projects/ssot/en/latest/admin/integrations/bootstrap_setup/)).
+The Bootstrap job exists only when the `server` role runs with `server_bootstrap_enabled: true` and the DLM package and
+plugin are installed.
 
 The two YAML files sit at the repository root because the integration reads only the root. In its Git mode the adapter
 changes into the repository directory and loads every `.yml` and `.yaml` file found by `os.listdir("./")`, naming each
