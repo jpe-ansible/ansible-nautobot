@@ -74,6 +74,9 @@ inside stage 1, and configuration changes restart the services inside stage 3. S
 the package pins differ from the pins recorded at the last service restart, so a package-only upgrade loads the new
 code. A fresh host needs one run with no tag filter, because migrations need the settings file.
 
+Under `--check`, the migration and post-upgrade return-code checks and the web wait are skipped, because their
+commands and request do not run.
+
 ## Network exposure
 
 The web service listens on plain HTTP at `server_web_bind` and `server_web_port`. `server_web_bind` defaults to
