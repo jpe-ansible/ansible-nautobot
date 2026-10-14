@@ -1,0 +1,33 @@
+---
+- name: Run the shared Bootstrap dependency guard
+  block:
+    - name: Reset the Bootstrap guard result
+      ansible.builtin.set_fact:
+        server_bootstrap_guard_result: passed
+        server_bootstrap_guard_message: ""
+
+    - name: Include the server role dependency guard
+      vars:
+        server_bootstrap_enabled: "{{ server_bootstrap_guard_case.enabled }}"
+        server_plugins: "{{ server_bootstrap_guard_case.plugins }}"
+        server_pip_packages: "{{ server_bootstrap_guard_case.packages }}"
+      ansible.builtin.include_tasks:
+        file: "{{ playbook_dir }}/../../../../roles/server/tasks/validate_bootstrap.yml"
+
+  rescue:
+    - name: Record the failed Bootstrap guard result
+      ansible.builtin.set_fact:
+        server_bootstrap_guard_result: failed
+        server_bootstrap_guard_message: "{{ ansible_failed_result.msg | default('') }}"
+
+- name: Assert the Bootstrap guard matches the expected result
+  ansible.builtin.assert:
+    that:
+      - (server_bootstrap_guard_result == 'failed') == (server_bootstrap_guard_case.rejected | bool)
+      - >-
+        (server_bootstrap_guard_message is search('NautobotValidatedSoftware'))
+        == (server_bootstrap_guard_case.rejected | bool)
+      - >-
+        (server_bootstrap_guard_message is search('Bootstrap needs the DLM package and plugin'))
+        == (server_bootstrap_guard_case.rejected | bool)
+    fail_msg: "Bootstrap dependency guard gave the wrong result for {{ server_bootstrap_guard_case.name }}."

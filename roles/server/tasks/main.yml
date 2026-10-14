@@ -1,4 +1,7 @@
 ---
+- name: Validate SSoT Bootstrap dependencies before managing Nautobot
+  ansible.builtin.import_tasks: validate_bootstrap.yml
+
 - name: Validate OpenBao and superuser inputs when managing the application
   ansible.builtin.assert:
     that:
@@ -123,15 +126,37 @@
         group: "{{ server_group }}"
         mode: "0644"
 
+- name: Validate the command environment entries
+  ansible.builtin.include_tasks:
+    file: env_validate.yml
+    apply:
+      tags: [server_migrate]
+  tags: [server_migrate]
+
 - name: Migrate the Nautobot database and ensure the first superuser
   when: server_manage_app | bool
   become: true
   tags: [server_migrate]
   block:
+    - name: Render the private Nautobot command environment
+      ansible.builtin.copy:
+        content: |
+          # Managed by Ansible.
+          {% for key, value in server_env | dictsort %}
+          export {{ key }}={{ value | string | quote }}
+          {% endfor %}
+        dest: "{{ server_root }}/.nautobot-cmd-env.sh"
+        owner: "{{ server_user }}"
+        group: "{{ server_group }}"
+        mode: "0600"
+      no_log: true
+
     - name: Run Nautobot database migrations
-      ansible.builtin.command:
-        cmd: "{{ server_root }}/bin/nautobot-server migrate"
-      environment: "{{ server_env }}"
+      ansible.builtin.shell:
+        cmd: >-
+          . {{ (server_root ~ '/.nautobot-cmd-env.sh') | quote }}
+          && exec {{ (server_root ~ '/bin/nautobot-server') | quote }} migrate
+        executable: /bin/bash
       register: server_migrate
       changed_when: "'No migrations to apply' not in server_migrate.stdout"
       failed_when: false
@@ -167,9 +192,11 @@
           != (server_pip_packages | join(',') | hash('sha1')) }}
 
     - name: Run Nautobot post-upgrade operations when packages changed
-      ansible.builtin.command:
-        cmd: "{{ server_root }}/bin/nautobot-server post_upgrade --no-migrate"
-      environment: "{{ server_env }}"
+      ansible.builtin.shell:
+        cmd: >-
+          . {{ (server_root ~ '/.nautobot-cmd-env.sh') | quote }}
+          && exec {{ (server_root ~ '/bin/nautobot-server') | quote }} post_upgrade --no-migrate
+        executable: /bin/bash
       register: server_post_upgrade
       changed_when: true
       failed_when: false
@@ -204,22 +231,45 @@
       when: server_post_upgrade_needed | bool
 
     - name: Ensure the first Nautobot superuser exists
-      ansible.builtin.command:
-        cmd: "{{ server_root }}/bin/nautobot-server createsuperuser --noinput"
-      environment: >-
-        {{ server_env | combine({
-          'DJANGO_SUPERUSER_USERNAME': server_superuser_name,
-          'DJANGO_SUPERUSER_EMAIL': server_superuser_email,
-          'DJANGO_SUPERUSER_PASSWORD': server_superuser_password
-        }) }}
-      register: server_superuser_create
-      changed_when: server_superuser_create.rc == 0
-      failed_when: >-
-        server_superuser_create.rc != 0
-        and 'is already taken' not in server_superuser_create.stderr
-      become: true
-      become_user: "{{ server_user }}"
-      no_log: true
+      block:
+        - name: Render the private Nautobot superuser command environment
+          ansible.builtin.copy:
+            content: |
+              # Managed by Ansible.
+              {% for key, value in server_superuser_env | dictsort %}
+              export {{ key }}={{ value | string | quote }}
+              {% endfor %}
+            dest: "{{ server_root }}/.nautobot-superuser-env.sh"
+            owner: "{{ server_user }}"
+            group: "{{ server_group }}"
+            mode: "0600"
+          vars:
+            server_superuser_env:
+              DJANGO_SUPERUSER_USERNAME: "{{ server_superuser_name }}"
+              DJANGO_SUPERUSER_EMAIL: "{{ server_superuser_email }}"
+              DJANGO_SUPERUSER_PASSWORD: "{{ server_superuser_password }}"
+          no_log: true
+
+        - name: Run Nautobot createsuperuser
+          ansible.builtin.shell:
+            cmd: >-
+              . {{ (server_root ~ '/.nautobot-cmd-env.sh') | quote }}
+              && . {{ (server_root ~ '/.nautobot-superuser-env.sh') | quote }}
+              && exec {{ (server_root ~ '/bin/nautobot-server') | quote }} createsuperuser --noinput
+            executable: /bin/bash
+          register: server_superuser_create
+          changed_when: server_superuser_create.rc == 0
+          failed_when: >-
+            server_superuser_create.rc != 0
+            and 'is already taken' not in server_superuser_create.stderr
+          become: true
+          become_user: "{{ server_user }}"
+          no_log: true
+      always:
+        - name: Remove the private Nautobot superuser command environment
+          ansible.builtin.file:
+            path: "{{ server_root }}/.nautobot-superuser-env.sh"
+            state: absent
 
 - name: Apply the configuration, start the Nautobot services and wait for the web interface
   when: server_manage_app | bool

@@ -21,6 +21,27 @@
       circuit: true
       vlan: true
       prefix: true
+    server_bootstrap_guard_cases:
+      - name: enabled without the DLM plugin
+        enabled: true
+        plugins: []
+        packages: ["nautobot-device-lifecycle-mgmt==1.0"]
+        rejected: true
+      - name: enabled without the DLM package
+        enabled: true
+        plugins: [nautobot_device_lifecycle_mgmt]
+        packages: []
+        rejected: true
+      - name: enabled with the DLM plugin and package
+        enabled: true
+        plugins: [nautobot_device_lifecycle_mgmt]
+        packages: ["nautobot-device-lifecycle-mgmt[extra]==1.0"]
+        rejected: false
+      - name: disabled without DLM
+        enabled: false
+        plugins: []
+        packages: []
+        rejected: false
   tasks:
     - name: Load the server role defaults for contract assertions
       ansible.builtin.include_vars:
@@ -107,6 +128,135 @@
       delegate_to: localhost
       become: false
 
+    - name: Find every server task file for the secret command-line contract
+      ansible.builtin.find:
+        paths: "{{ playbook_dir }}/../../../../roles/server/tasks"
+        patterns: "*.yml"
+        recurse: true
+      register: server_task_file_search
+      delegate_to: localhost
+      become: false
+
+    - name: Initialize the parsed server task documents
+      ansible.builtin.set_fact:
+        server_task_documents: []
+      delegate_to: localhost
+      become: false
+
+    - name: Parse every server task file, including dynamically included files
+      ansible.builtin.set_fact:
+        server_task_documents: >-
+          {{ server_task_documents + [lookup('ansible.builtin.file', item.path) | from_yaml] }}
+      loop: "{{ server_task_file_search.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Scan nested tasks for environment keys and command inputs
+      ansible.builtin.set_fact:
+        server_task_environment_scan: >-
+          {% macro scan(tasks) -%}
+          {% for task in tasks | default([]) -%}
+          {% if 'environment' in task -%}ENVIRONMENT_MARKER{% endif -%}
+          {% for section in ['block', 'rescue', 'always'] -%}
+          {% if section in task -%}{{ scan(task[section]) }}{% endif -%}
+          {% endfor -%}
+          {% endfor -%}
+          {%- endmacro -%}
+          {{ scan(server_task_documents | flatten) }}
+        server_task_command_scan: >-
+          {% macro scan(tasks) -%}
+          {% for task in tasks | default([]) -%}
+          {% for module in ['ansible.builtin.shell', 'ansible.builtin.command', 'shell', 'command'] -%}
+          {% if module in task -%}
+          {% set arguments = task[module] -%}
+          {% if arguments is mapping -%}
+          {% for argument in ['cmd', 'argv', 'stdin', 'free_form'] -%}
+          {% if argument in arguments -%}{{ arguments[argument] | to_json }}{% endif -%}
+          {% endfor -%}
+          {% else -%}{{ arguments | to_json }}{% endif -%}
+          {% endif -%}
+          {% endfor -%}
+          {% for section in ['block', 'rescue', 'always'] -%}
+          {% if section in task -%}{{ scan(task[section]) }}{% endif -%}
+          {% endfor -%}
+          {% endfor -%}
+          {%- endmacro -%}
+          {{ scan(server_task_documents | flatten) }}
+      delegate_to: localhost
+      become: false
+
+    - name: Assert no task environment or secret-bearing command input exists
+      ansible.builtin.assert:
+        that:
+          - server_task_environment_scan is not search('ENVIRONMENT_MARKER')
+          - >-
+            (server_task_command_scan
+            | regex_replace('\.nautobot-cmd-env\.sh', '')
+            | regex_replace('\.nautobot-superuser-env\.sh', ''))
+            is not search('(?i)(password|secret|token|credential|api_key|private_key)')
+        fail_msg: A server task exposes secrets through an environment or command input.
+      delegate_to: localhost
+      become: false
+
+    - name: Verify shell-quoted environment values survive a Bash source round trip
+      vars:
+        server_quote_test_values:
+          MOLECULE_SECRET_QUOTE_ONE: '$HOME `literal` "double quote"'
+          MOLECULE_SECRET_QUOTE_TWO: "single' quote and space"
+      block:
+        - name: Render the shell-quoted environment test file
+          ansible.builtin.copy:
+            content: |
+              # Test-only environment file.
+              {% for key, value in server_quote_test_values | dictsort %}
+              export {{ key }}={{ value | string | quote }}
+              {% endfor %}
+            dest: /tmp/server-command-env-quoting-test
+            mode: "0600"
+          no_log: true
+
+        - name: Stat the shell-quoted environment test file
+          ansible.builtin.stat:
+            path: /tmp/server-command-env-quoting-test
+          register: server_quote_test_stat
+
+        - name: Read the shell-quoted environment test file
+          ansible.builtin.slurp:
+            src: /tmp/server-command-env-quoting-test
+          register: server_quote_test_file
+          no_log: true
+
+        - name: Source the test environment with Bash
+          ansible.builtin.shell:
+            cmd: >-
+              . /tmp/server-command-env-quoting-test
+              && printf '%s\n%s' "$MOLECULE_SECRET_QUOTE_ONE" "$MOLECULE_SECRET_QUOTE_TWO"
+            executable: /bin/bash
+          register: server_quote_test_result
+          changed_when: false
+          no_log: true
+
+        - name: Assert file permissions, export lines and exact value round trip
+          ansible.builtin.assert:
+            that:
+              - server_quote_test_stat.stat.mode == '0600'
+              - >-
+                (server_quote_test_file.content | b64decode | regex_findall('(?m)^export [A-Za-z_][A-Za-z0-9_]*='))
+                | length == 2
+              - server_quote_test_result.stdout_lines == [
+                  server_quote_test_values.MOLECULE_SECRET_QUOTE_ONE,
+                  server_quote_test_values.MOLECULE_SECRET_QUOTE_TWO
+                ]
+            fail_msg: Shell-quoted environment values or file permissions did not survive the round trip.
+          no_log: true
+      always:
+        - name: Remove the shell-quoted environment test file
+          ansible.builtin.file:
+            path: /tmp/server-command-env-quoting-test
+            state: absent
+
     - name: Select the three application stage blocks
       ansible.builtin.set_fact:
         server_app_blocks: >-
@@ -137,6 +287,19 @@
           {{ server_migrate_block.get('block', [])
           | selectattr('name', 'equalto', 'Ensure the first Nautobot superuser exists')
           | list }}
+        server_command_env_task: "{{ server_migrate_block.get('block', [])[0] | default({}) }}"
+
+    - name: Select the superuser command, environment renderer and cleanup
+      ansible.builtin.set_fact:
+        server_superuser_run_tasks: >-
+          {{ ((server_superuser_tasks | first | default({})).get('block', []))
+          | selectattr('name', 'equalto', 'Run Nautobot createsuperuser') | list }}
+        server_superuser_env_tasks: >-
+          {{ ((server_superuser_tasks | first | default({})).get('block', []))
+          | selectattr('name', 'equalto', 'Render the private Nautobot superuser command environment') | list }}
+        server_superuser_cleanup_tasks: >-
+          {{ ((server_superuser_tasks | first | default({})).get('always', []))
+          | selectattr('name', 'equalto', 'Remove the private Nautobot superuser command environment') | list }}
 
     - name: Assert account reconciliation is guarded without disabling application setup
       ansible.builtin.assert:
@@ -147,7 +310,21 @@
           - server_account_include_tasks[0]['ansible.builtin.include_tasks']['file'] == 'accounts.yml'
           - server_account_include_tasks[0]['when'] == 'server_manage_accounts | bool'
           - server_superuser_tasks | length == 1
-          - server_superuser_tasks[0]['ansible.builtin.command']['cmd'] is search('createsuperuser --noinput')
+          - server_superuser_run_tasks | length == 1
+          - server_superuser_run_tasks[0]['ansible.builtin.shell']['cmd'] is search('createsuperuser --noinput')
+          - server_superuser_run_tasks[0]['ansible.builtin.shell']['executable'] == '/bin/bash'
+          - server_superuser_env_tasks | length == 1
+          - server_superuser_env_tasks[0]['ansible.builtin.copy']['dest'] is search('\.nautobot-superuser-env\.sh$')
+          - server_superuser_env_tasks[0]['ansible.builtin.copy']['mode'] == '0600'
+          - server_superuser_env_tasks[0]['no_log'] | bool
+          - server_superuser_cleanup_tasks | length == 1
+          - server_superuser_cleanup_tasks[0]['ansible.builtin.file']['state'] == 'absent'
+          - server_command_env_task.name == 'Render the private Nautobot command environment'
+          - server_command_env_task['ansible.builtin.copy']['dest'] is search('\.nautobot-cmd-env\.sh$')
+          - server_command_env_task['ansible.builtin.copy']['mode'] == '0600'
+          - server_command_env_task.no_log | bool
+          - server_command_env_task['ansible.builtin.copy']['content'] is search('server_env \| dictsort')
+          - server_command_env_task['ansible.builtin.copy']['content'] is search('value \| string \| quote')
           - server_superuser_tasks[0].get('when') is none
         fail_msg: Service account reconciliation is not guarded by server_manage_accounts.
 
@@ -205,6 +382,9 @@
           - server_role_specs.argument_specs.main.options.server_manage_accounts.default | bool
           - server_role_specs.argument_specs.main.options.server_manage_accounts.description
             == 'Reconcile Nautobot service accounts, permissions, tokens and published token fields.'
+          - not server_role_defaults.server_bootstrap_enabled | bool
+          - server_role_specs.argument_specs.main.options.server_bootstrap_enabled.type == 'bool'
+          - not server_role_specs.argument_specs.main.options.server_bootstrap_enabled.default | bool
         fail_msg: Account management defaults or its argument specification are missing.
 
     - name: Read the rendered Nautobot settings
@@ -216,6 +396,15 @@
       ansible.builtin.set_fact:
         server_rendered_config: "{{ server_config.content | b64decode }}"
 
+    - name: Parse the default Nautobot settings as Python
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - import ast,sys; ast.parse(open(sys.argv[1]).read())
+          - "{{ server_root }}/nautobot_config.py"
+      changed_when: false
+
     - name: Assert Bootstrap defaults match the documented model selection
       ansible.builtin.assert:
         that:
@@ -223,32 +412,29 @@
           - not server_role_defaults.server_bootstrap_models_to_sync.role | bool
         fail_msg: Bootstrap model defaults differ from their documented selection.
 
-    # The settings file is Python, so the selection must render as True and
-    # False. JSON true and false are undefined names and stop Nautobot at start.
-    - name: Assert the Bootstrap model selection renders as Python literals
-      ansible.builtin.assert:
-        that:
-          - >-
-            ('"' ~ item.key ~ '": ' ~ ('True' if item.value else 'False') ~ ',')
-            in server_rendered_config
-          - server_rendered_config is not search(':\s+(true|false)\b')
-        fail_msg: Rendered Bootstrap model selection is not valid Python.
-      loop: "{{ server_bootstrap_expected_models | dict2items }}"
-      loop_control:
-        label: "{{ item.key }}"
-
-    - name: Assert settings include the UI host, apps, DB host, and Bootstrap keys
+    - name: Assert settings include the UI host and apps but omit opt-in Bootstrap settings
       ansible.builtin.assert:
         that:
           - "server_ui_fqdn in server_rendered_config"
           - "'nautobot_ssot' in server_rendered_config"
           - "'nautobot_device_onboarding' in server_rendered_config"
           - "server_db_host in server_rendered_config"
-          - "'enable_bootstrap' in server_rendered_config"
-          - "'bootstrap_nautobot_environment_branch' in server_rendered_config"
-        fail_msg: Rendered settings are missing the server configuration contract.
+          - >-
+            ('"hide_example_jobs": True,') in server_rendered_config
+          - "'enable_bootstrap' not in server_rendered_config"
+          - "'bootstrap_nautobot_environment_branch' not in server_rendered_config"
+          - "'bootstrap_models_to_sync' not in server_rendered_config"
+        fail_msg: Rendered settings do not honor the default-off Bootstrap configuration.
       vars:
         server_rendered_config: "{{ server_config.content | b64decode }}"
+
+    - name: Exercise the Bootstrap dependency guard against each DLM configuration
+      ansible.builtin.include_tasks:
+        file: tasks/bootstrap_guard_case.yml
+      loop: "{{ server_bootstrap_guard_cases }}"
+      loop_control:
+        loop_var: server_bootstrap_guard_case
+        label: "{{ server_bootstrap_guard_case.name }}"
 
     - name: Stat the Nautobot environment file
       ansible.builtin.stat:
@@ -455,6 +641,61 @@
         server_bind_lines: "{{ (server_override_renders.results[0].content | b64decode).splitlines() }}"
         server_untrusted_text: "{{ server_override_renders.results[1].content | b64decode }}"
 
+    - name: Enable Bootstrap with its DLM dependencies for the settings render
+      ansible.builtin.set_fact:
+        server_bootstrap_enabled: true
+        server_plugins: "{{ server_plugins + ['nautobot_device_lifecycle_mgmt'] }}"
+        server_pip_packages: "{{ server_pip_packages + ['nautobot-device-lifecycle-mgmt[extra]==1.0'] }}"
+
+    - name: Render the settings with Bootstrap enabled
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../../../../roles/server/templates/nautobot_config.py.j2"
+        dest: /tmp/nautobot_config-bootstrap-enabled.py
+        mode: "0600"
+
+    - name: Read the Bootstrap-enabled settings
+      ansible.builtin.slurp:
+        src: /tmp/nautobot_config-bootstrap-enabled.py
+      register: server_bootstrap_enabled_config_file
+
+    - name: Decode the Bootstrap-enabled settings
+      ansible.builtin.set_fact:
+        server_bootstrap_enabled_config: "{{ server_bootstrap_enabled_config_file.content | b64decode }}"
+
+    - name: Parse Bootstrap-enabled settings as Python
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - import ast,sys; ast.parse(open(sys.argv[1]).read())
+          - /tmp/nautobot_config-bootstrap-enabled.py
+      changed_when: false
+
+    - name: Assert Bootstrap settings and model selection render when enabled
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('"enable_bootstrap": True,') in server_bootstrap_enabled_config
+          - >-
+            'bootstrap_nautobot_environment_branch' in server_bootstrap_enabled_config
+          - >-
+            'bootstrap_models_to_sync' in server_bootstrap_enabled_config
+          - >-
+            'nautobot_device_lifecycle_mgmt' in server_bootstrap_enabled_config
+        fail_msg: Rendered settings omit enabled Bootstrap configuration or its DLM plugin.
+
+    - name: Assert the enabled Bootstrap model selection renders as Python literals
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('"' ~ item.key ~ '": ' ~ ('True' if item.value else 'False') ~ ',')
+            in server_bootstrap_enabled_config
+          - server_bootstrap_enabled_config is not search(':\s+(true|false)\b')
+        fail_msg: Rendered Bootstrap model selection is not valid Python.
+      loop: "{{ server_bootstrap_expected_models | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
 - name: Verify the stage tags select disjoint task sets
   hosts: localhost
   connection: local
@@ -477,8 +718,10 @@
         skip: server_install,server_config
         present:
           - Resolve and persist the Nautobot SECRET_KEY
+          - Render the private Nautobot command environment
           - Run Nautobot database migrations
-          - Ensure the first Nautobot superuser exists
+          - Render the private Nautobot superuser command environment
+          - Run Nautobot createsuperuser
         absent:
           - Create the Nautobot virtual environment
           - Render the Nautobot settings
@@ -531,10 +774,14 @@
       loop_control:
         label: "{{ item.0.name }}"
 
-    - name: Assert only the two input validation tasks carry no stage tag
+    - name: Assert the three validation tasks carry no stage tag
       ansible.builtin.assert:
         that:
-          - server_untagged | length == 2
+          - server_untagged | length == 3
+          - >-
+            server_untagged
+            | select('search', 'Require DLM when the SSoT Bootstrap integration is enabled')
+            | list | length == 1
           - server_untagged | select('search', 'Validate OpenBao and superuser inputs') | list | length == 1
           - server_untagged | select('search', 'Validate the database credential') | list | length == 1
         fail_msg: "Stage {{ item.item.name }} lists a server role task that has no stage tag."
