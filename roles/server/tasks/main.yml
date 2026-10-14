@@ -17,10 +17,18 @@
   when: server_manage_app | bool
 
 - name: Install system packages, create the service account, and configure Redis
-  ansible.builtin.include_tasks: system_and_redis.yml
+  ansible.builtin.include_tasks:
+    file: system_and_redis.yml
+    apply:
+      tags: [server_install]
+  tags: [server_install]
 
 - name: Resolve and persist the Nautobot SECRET_KEY
-  ansible.builtin.include_tasks: secret_key.yml
+  ansible.builtin.include_tasks:
+    file: secret_key.yml
+    apply:
+      tags: [server_secret]
+  tags: [server_secret]
 
 - name: Render the Nautobot settings
   ansible.builtin.template:
@@ -30,9 +38,14 @@
     group: "{{ server_group }}"
     mode: "0644"
   notify: Restart Nautobot services
+  tags: [server_config]
 
 - name: Validate the environment file entries
-  ansible.builtin.include_tasks: env_validate.yml
+  ansible.builtin.include_tasks:
+    file: env_validate.yml
+    apply:
+      tags: [server_config]
+  tags: [server_config]
 
 - name: Render the private Nautobot environment file
   ansible.builtin.template:
@@ -43,6 +56,7 @@
     mode: "0600"
   no_log: true
   notify: Restart Nautobot services
+  tags: [server_config]
 
 - name: Render the uWSGI configuration
   ansible.builtin.template:
@@ -52,6 +66,7 @@
     group: "{{ server_group }}"
     mode: "0644"
   notify: Restart Nautobot services
+  tags: [server_config]
 
 - name: Install Nautobot systemd units
   ansible.builtin.template:
@@ -67,10 +82,12 @@
   notify:
     - Reload systemd daemon
     - Restart Nautobot services
+  tags: [server_config]
 
-- name: Manage the Nautobot application
+- name: Install the Nautobot application packages
   when: server_manage_app | bool
   become: true
+  tags: [server_install]
   block:
     - name: Create the Nautobot virtual environment
       ansible.builtin.command:
@@ -106,6 +123,11 @@
         group: "{{ server_group }}"
         mode: "0644"
 
+- name: Migrate the Nautobot database and ensure the first superuser
+  when: server_manage_app | bool
+  become: true
+  tags: [server_migrate]
+  block:
     - name: Run Nautobot database migrations
       ansible.builtin.command:
         cmd: "{{ server_root }}/bin/nautobot-server migrate"
@@ -193,6 +215,20 @@
       become_user: "{{ server_user }}"
       no_log: true
 
+- name: Apply the configuration, start the Nautobot services and wait for the web interface
+  when: server_manage_app | bool
+  become: true
+  tags: [server_config]
+  block:
+    - name: Record the package pins the services run and restart them when the pins changed
+      ansible.builtin.copy:
+        content: "{{ server_pip_packages | join(',') }}"
+        dest: "{{ server_root }}/.services_stamp"
+        owner: "{{ server_user }}"
+        group: "{{ server_group }}"
+        mode: "0644"
+      notify: Restart Nautobot services
+
     - name: Apply pending Nautobot service handlers
       ansible.builtin.meta: flush_handlers
 
@@ -219,5 +255,8 @@
       changed_when: false
 
     - name: Reconcile service accounts and API tokens
-      ansible.builtin.include_tasks: accounts.yml
+      ansible.builtin.include_tasks:
+        file: accounts.yml
+        apply:
+          tags: [server_config]
       when: server_manage_accounts | bool

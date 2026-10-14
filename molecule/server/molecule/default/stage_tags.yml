@@ -1,0 +1,8 @@
+---
+# Lists the server role's tasks so verify.yml can check which stage tag selects which task. Never converged.
+- name: List the server role tasks
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - role: server
