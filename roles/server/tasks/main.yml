@@ -142,12 +142,14 @@
     - name: Report the migration return code
       ansible.builtin.debug:
         msg: "Nautobot migration completed with rc={{ server_migrate.rc }}."
+      when: not ansible_check_mode
 
     - name: Require successful database migrations
       ansible.builtin.assert:
         that:
           - server_migrate.rc == 0
         fail_msg: "Nautobot migration failed with rc={{ server_migrate.rc }}."
+      when: not ansible_check_mode
 
     - name: Read the completed post-upgrade package stamp
       ansible.builtin.stat:
@@ -179,14 +181,18 @@
     - name: Report the post-upgrade return code
       ansible.builtin.debug:
         msg: "Nautobot post-upgrade completed with rc={{ server_post_upgrade.rc }}."
-      when: server_post_upgrade_needed | bool
+      when:
+        - server_post_upgrade_needed | bool
+        - not ansible_check_mode
 
     - name: Require successful post-upgrade operations
       ansible.builtin.assert:
         that:
           - server_post_upgrade.rc == 0
         fail_msg: "Nautobot post-upgrade failed with rc={{ server_post_upgrade.rc }}."
-      when: server_post_upgrade_needed | bool
+      when:
+        - server_post_upgrade_needed | bool
+        - not ansible_check_mode
 
     - name: Record the package pins after post-upgrade completes
       ansible.builtin.copy:
@@ -253,6 +259,7 @@
       retries: 20
       delay: 6
       changed_when: false
+      when: not ansible_check_mode
 
     - name: Reconcile service accounts and API tokens
       ansible.builtin.include_tasks:
