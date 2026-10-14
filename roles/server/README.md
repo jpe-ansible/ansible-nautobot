@@ -54,6 +54,26 @@ field only when it differs from the effective key, using KV v2 check-and-set aga
 sibling fields. An unchanged converge creates no new KV version, and a rebuilt host reuses the stored key. With
 `server_manage_app` false, the role does not read or write OpenBao.
 
+## Running in stages
+
+A run with no tag filter does everything in one pass. Tags let a caller run the role as separate stages, for a runner
+with a time limit per task:
+
+- **1 install**, tag `server_install`: system packages, service account, directories, Redis, virtual environment and
+  pinned packages. To run only this stage, skip `server_secret,server_migrate,server_config`.
+- **2 migrate**, tag `server_migrate`: migrations, post-upgrade and the first superuser. These need the SECRET_KEY, so
+  `server_secret` also runs. To run only this stage, skip `server_install,server_config`.
+- **3 config**, tag `server_config`: settings, environment file, uWSGI, units, handler flush, service start, web wait
+  and accounts. These need the SECRET_KEY, so `server_secret` also runs. To run only this stage, skip
+  `server_install,server_migrate`.
+
+Run the stages in this order on an upgrade: the new settings and the service restart in stage 3 take effect only after
+stage 1 has installed the packages and stage 2 has migrated the database. Stage 1 replaces package files while the
+running services still hold the old code, and the restart in stage 3 loads the new code. Redis changes restart Redis
+inside stage 1, and configuration changes restart the services inside stage 3. Stage 3 also restarts the services when
+the package pins differ from the pins recorded at the last service restart, so a package-only upgrade loads the new
+code. A fresh host needs one run with no tag filter, because migrations need the settings file.
+
 ## Network exposure
 
 The web service listens on plain HTTP at `server_web_bind` and `server_web_port`. `server_web_bind` defaults to

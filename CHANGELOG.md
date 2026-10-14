@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.2.1...v0.3.0) (2026-10-14)
+
+
+### Features
+
+* **server:** tag the role into install, migrate and config stages ([#18](https://github.com/jpe-ansible/ansible-nautobot/issues/18)) ([9a62d63](https://github.com/jpe-ansible/ansible-nautobot/commit/9a62d63ef6f8bc4b0148bd56261ca7acfc652a57))
+
 ## [0.2.1](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.2.0...v0.2.1) (2026-10-13)
 
 
