@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.3.0...v0.3.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **server:** disable become on controller-delegated tasks with the variable ([#22](https://github.com/jpe-ansible/ansible-nautobot/issues/22)) ([5e6840e](https://github.com/jpe-ansible/ansible-nautobot/commit/5e6840e9aa666e23461cb02cb02de137d1cb4f57))
+
 ## [0.3.0](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.2.1...v0.3.0) (2026-10-14)
 
 
