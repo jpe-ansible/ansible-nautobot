@@ -44,6 +44,7 @@ PLUGINS = {{ server_plugins | to_json }}
 PLUGINS_CONFIG = {
     "nautobot_ssot": {
         "hide_example_jobs": True,
+{% if server_bootstrap_enabled | bool %}
         "enable_bootstrap": True,
         "bootstrap_nautobot_environment_branch": {{ server_bootstrap_environment_branch | to_json }},
         "bootstrap_models_to_sync": {
@@ -51,6 +52,7 @@ PLUGINS_CONFIG = {
             {{ model | to_json }}: {{ 'True' if enabled | bool else 'False' }},
 {% endfor %}
         },
+{% endif %}
     },
     "nautobot_device_onboarding": {},
 }

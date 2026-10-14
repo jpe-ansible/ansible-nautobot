@@ -44,7 +44,7 @@ reconciliation while keeping application management enabled.
 | SECRET_KEY | Resolved and persisted using the precedence below; OpenBao updates preserve sibling fields. |
 | Packages | The pinned application packages install into a virtual environment; migrations run on each converge and post-upgrade runs when the pins change. |
 | Superuser | `createsuperuser --noinput` with the username, email and password in a protected environment; an existing username counts as unchanged. |
-| Bootstrap integration | The SSoT `bootstrap` extra and the three Bootstrap settings. |
+| Bootstrap integration | Opt-in via `server_bootstrap_enabled`; requires the DLM package and plugin; renders three settings when enabled. |
 | Service accounts | One reader per consumer and one writer, each with its own object permissions and API token. |
 | Environment file | Each `server_env` entry renders double-quoted with escapes. A bad key or a value with a line break fails the run. |
 
@@ -53,6 +53,17 @@ host file, and a newly generated key. The role updates the host file only when i
 field only when it differs from the effective key, using KV v2 check-and-set against the version just read while preserving
 sibling fields. An unchanged converge creates no new KV version, and a rebuilt host reuses the stored key. With
 `server_manage_app` false, the role does not read or write OpenBao.
+
+## Bootstrap variables
+
+| Variable | Default | Behavior |
+| --- | --- | --- |
+| `server_bootstrap_enabled` | `false` | Opt in; requires the DLM package and plugin listed below. |
+| `server_bootstrap_environment_branch` | `develop` | Branch used by the SSoT Bootstrap integration when enabled. |
+| `server_bootstrap_models_to_sync` | See `defaults/main.yml` | Models selected when the SSoT Bootstrap integration is enabled. |
+
+When enabled, `server_pip_packages` must include `nautobot-device-lifecycle-mgmt`, and `server_plugins` must include
+`nautobot_device_lifecycle_mgmt`.
 
 ## Running in stages
 
