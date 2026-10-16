@@ -94,7 +94,7 @@ server_inventory_object_types:
   - extras.tag
 
 server_mcp_username: svc-mcp-ro
-server_mcp_token_path: nautobot/mcp
+server_mcp_token_path: ai/mcp/nautobot
 server_mcp_token_key: NAUTOBOT_MCP_TOKEN
 server_mcp_url_key: NAUTOBOT_MCP_URL
 server_mcp_object_types:
