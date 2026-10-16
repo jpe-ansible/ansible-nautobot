@@ -75,6 +75,15 @@
       delegate_to: localhost
       become: false
 
+    - name: Assert MCP account publication uses the consumer contract
+      ansible.builtin.assert:
+        that:
+          - server_role_defaults.server_mcp_username == 'svc-mcp-ro'
+          - server_role_defaults.server_mcp_token_path == 'ai/mcp/nautobot'
+          - server_role_defaults.server_mcp_token_key == 'NAUTOBOT_MCP_TOKEN'
+          - server_role_defaults.server_mcp_url_key == 'NAUTOBOT_MCP_URL'
+        fail_msg: MCP token publication does not match the consumer contract.
+
     - name: Assert least-privilege permission defaults follow the sync_in flow identifiers
       ansible.builtin.assert:
         that:
