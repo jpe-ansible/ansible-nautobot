@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.1](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.4.0...v0.4.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* align MCP publication contract ([47c31a5](https://github.com/jpe-ansible/ansible-nautobot/commit/47c31a53842d40b72a95acf5404eda5f96cfca88))
+* align MCP publication contract ([f424dd6](https://github.com/jpe-ansible/ansible-nautobot/commit/f424dd6c74da7bec35f41430675f0663bea5f990))
+* **server:** source the command environment from a protected file ([3788471](https://github.com/jpe-ansible/ansible-nautobot/commit/3788471c95e0dd43b925073ecfbee5d8d8879ec6))
+* **server:** source the command environment from a protected file ([6fe4a73](https://github.com/jpe-ansible/ansible-nautobot/commit/6fe4a7393f12d3df18cb905f7a01898531005146))
+
 ## [0.4.0](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.3.1...v0.4.0) (2026-10-14)
 
 
