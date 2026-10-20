@@ -21,7 +21,7 @@ jobs:
     uses: JacobPEvans/.github/.github/workflows/_ansible-ci.yml@v1
     with:
       molecule: false
-      molecule_scenario_filters: |
+      molecule_scenario_filters: &molecule_scenario_filters |
         server:
           - 'roles/server/**'
           - 'roles/url_guard/**'
@@ -59,20 +59,27 @@ jobs:
           - 'molecule/live/**'
           - 'requirements*'
 
+  changes:
+    name: Detect Changes
+    uses: JacobPEvans/.github/.github/workflows/_ansible-changes.yml@v1
+    with:
+      molecule: false
+      molecule_scenario_filters: *molecule_scenario_filters
+
   molecule:
     name: Molecule
-    needs: ci
-    if: ${{ needs.ci.outputs.molecule == 'true' && needs.ci.outputs.molecule_scenarios != '[]' }}
+    needs: changes
+    if: ${{ needs.changes.outputs.molecule == 'true' && needs.changes.outputs.molecule_scenarios != '[]' }}
     uses: ./.github/workflows/_molecule.yml
     with:
       # An empty output means the full suite (a promotion to main); every scenario then runs.
       scenarios: >-
-        ${{ needs.ci.outputs.molecule_scenarios
+        ${{ needs.changes.outputs.molecule_scenarios
         || '["server", "sync_in", "sync_out", "preflight", "drift", "url_guard", "live"]' }}
 
   gate:
     name: Merge Gate
-    needs: [ci, molecule]
+    needs: [ci, changes, molecule]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:
