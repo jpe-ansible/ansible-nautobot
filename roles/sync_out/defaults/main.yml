@@ -1,7 +1,7 @@
 ---
 sync_out_object_storage_key: nautobot/nautobot_export.json
 # renovate: datasource=github-tags depName=dryvist/homelab-contracts
-sync_out_contract_version: "v5.3.1"
+sync_out_contract_version: "v5.8.0"
 sync_out_contract_schema_url: >-
   {{ 'https://raw.githubusercontent.com/dryvist/homelab-contracts/'
      ~ sync_out_contract_version
