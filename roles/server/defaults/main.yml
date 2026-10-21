@@ -15,7 +15,7 @@ server_system_packages:
   - sudo
 
 # renovate: datasource=pypi depName=nautobot
-server_version: "3.2.6"
+server_version: "3.2.7"
 # renovate: datasource=pypi depName=nautobot-ssot
 server_ssot_version: "4.7.0"
 # renovate: datasource=pypi depName=nautobot-device-onboarding
