@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.4.1...v0.4.2) (2026-10-24)
+
+
+### Bug Fixes
+
+* use shared Molecule workflow ([6b9a977](https://github.com/jpe-ansible/ansible-nautobot/commit/6b9a9779db7210b980fc2c8bbd6242ec147e28b0))
+
 ## [0.4.1](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.4.0...v0.4.1) (2026-10-16)
 
 
