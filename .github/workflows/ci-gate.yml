@@ -86,6 +86,7 @@ jobs:
       python_install_mode: pip_requirements
       requirements_files: '["requirements-test.txt", "requirements.txt"]'
       ansible_home_mode: shared
+      molecule_roles_path: roles
       galaxy_cache_enabled: false
       galaxy_install_mode: collections_only
       galaxy_retry_attempts: 1
