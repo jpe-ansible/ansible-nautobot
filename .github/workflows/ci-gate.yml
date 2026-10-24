@@ -26,6 +26,7 @@ jobs:
           - 'roles/server/**'
           - 'roles/url_guard/**'
           - 'molecule/server/**'
+          - '.github/workflows/**'
         sync_in:
           - 'roles/sync_in/**'
           - 'roles/url_guard/**'
@@ -58,6 +59,7 @@ jobs:
           - 'global_settings.yml'
           - 'molecule/live/**'
           - 'requirements*'
+          - '.github/workflows/**'
 
   changes:
     name: Detect Changes
