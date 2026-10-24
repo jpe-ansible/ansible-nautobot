@@ -70,12 +70,34 @@ jobs:
     name: Molecule
     needs: changes
     if: ${{ needs.changes.outputs.molecule == 'true' && needs.changes.outputs.molecule_scenarios != '[]' }}
-    uses: ./.github/workflows/_molecule.yml
+    uses: JacobPEvans/.github/.github/workflows/_molecule.yml@v1
     with:
       # An empty output means the full suite (a promotion to main); every scenario then runs.
       scenarios: >-
         ${{ needs.changes.outputs.molecule_scenarios
         || '["server", "sync_in", "sync_out", "preflight", "drift", "url_guard", "live"]' }}
+      scenario_discovery: caller_supplied
+      runner_label: ubuntu-latest
+      pull_request_timeout_minutes: 32
+      timeout_minutes: 360
+      python_version: "3.14"
+      python_install_mode: pip_requirements
+      requirements_files: '["requirements-test.txt", "requirements.txt"]'
+      ansible_home_mode: shared
+      galaxy_cache_enabled: false
+      galaxy_install_mode: collections_only
+      galaxy_retry_attempts: 1
+      galaxy_step_timeout_minutes: 360
+      galaxy_server_timeout_seconds: 0
+      fail_fast: false
+      docker_timeout_seconds: 0
+      docker_prune: false
+      molecule_workdir_mode: scenario_directory
+      molecule_scenario_arg: default
+      molecule_args: ""
+      doppler_enabled: false
+      test_secret_env_map: "{}"
+      use_homarr_token: false
 
   gate:
     name: Merge Gate
