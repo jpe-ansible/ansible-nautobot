@@ -1,0 +1,11 @@
+---
+- name: List the CSV columns
+  ansible.builtin.set_fact:
+    sync_out_homebox_columns: >-
+      {{ (sync_out_homebox_core_columns
+          + (sync_out_homebox_custom_fields | map(attribute='column') | list)
+          + ([sync_out_homebox_asset_tag_column] if sync_out_homebox_asset_tag_column else [])) | unique | list }}
+
+- name: Render the import CSV
+  ansible.builtin.set_fact:
+    sync_out_homebox_csv: "{{ lookup('ansible.builtin.template', 'import.csv.j2') }}"

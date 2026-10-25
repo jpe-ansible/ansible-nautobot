@@ -14,3 +14,6 @@ sync_out_homebox_core_columns:
   - HB.manufacturer
   - HB.model_number
   - HB.serial_number
+
+# Import ref to asset ID from the current Homebox export; asset_ids.yml replaces it when the IDs are preserved.
+sync_out_homebox_asset_ids: {}

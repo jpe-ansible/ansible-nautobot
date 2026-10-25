@@ -1,0 +1,40 @@
+---
+- name: Check the Nautobot records are present
+  ansible.builtin.assert:
+    that:
+      - sync_out_homebox_snapshot.data is mapping
+      - sync_out_homebox_snapshot.data.devices is sequence
+      - sync_out_homebox_snapshot.data.modules is sequence
+      - sync_out_homebox_snapshot.data.inventory_items is sequence
+      - sync_out_homebox_snapshot.data.devices | length > 0
+    fail_msg: The GraphQL response has no devices; the read token may lack view permission.
+    quiet: true
+
+- name: Build the Homebox rows
+  ansible.builtin.set_fact:
+    sync_out_homebox_feed: "{{ lookup('ansible.builtin.template', 'rows.json.j2') | from_json }}"
+
+- name: Keep the rows and the modules a scope rule excluded
+  ansible.builtin.set_fact:
+    sync_out_homebox_rows: "{{ sync_out_homebox_feed.rows }}"
+    sync_out_homebox_excluded: "{{ sync_out_homebox_feed.excluded }}"
+    sync_out_homebox_renamed: "{{ sync_out_homebox_feed.renamed }}"
+
+- name: Check every import ref is unique and every parent is a row
+  ansible.builtin.assert:
+    that:
+      - sync_out_homebox_rows | map(attribute='ref') | unique | list | length == sync_out_homebox_rows | length
+      - >-
+        sync_out_homebox_rows | map(attribute='parent') | select('truthy')
+        | difference(sync_out_homebox_rows | map(attribute='ref') | list) | list | length == 0
+    fail_msg: Two records share an import ref, or a record points at a parent that is not fed.
+    quiet: true
+
+- name: Log the feed size
+  ansible.builtin.debug:
+    msg: >-
+      Homebox feed: {{ sync_out_homebox_rows | length }} rows,
+      {{ sync_out_homebox_excluded | length }} modules excluded
+      ({{ sync_out_homebox_excluded | selectattr('reason', 'equalto', 'pattern') | list | length }} by pattern,
+      {{ sync_out_homebox_excluded | selectattr('reason', 'equalto', 'price') | list | length }} by price),
+      {{ sync_out_homebox_renamed | length }} refs renamed because the asset tag is already in use.

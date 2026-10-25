@@ -1,0 +1,28 @@
+---
+- name: Require the Homebox inputs when the import is applied
+  ansible.builtin.assert:
+    that:
+      - sync_out_homebox_url | default('') | length > 0
+      - sync_out_homebox_api_key | default('') | length > 0
+    fail_msg: sync_out_homebox_url and sync_out_homebox_api_key are required when sync_out_homebox_apply is true.
+    quiet: true
+  when: sync_out_homebox_apply | bool
+
+- name: Read the Nautobot hardware records
+  ansible.builtin.import_tasks: fetch.yml
+
+- name: Build the Homebox rows from the Nautobot records
+  ansible.builtin.import_tasks: build.yml
+
+- name: Read the asset IDs Homebox already holds
+  ansible.builtin.include_tasks: asset_ids_read.yml
+  when: sync_out_homebox_apply | bool and sync_out_homebox_preserve_asset_ids | bool
+
+- name: Map import refs to the asset IDs Homebox already holds
+  ansible.builtin.import_tasks: asset_ids.yml
+
+- name: Render the Homebox import CSV
+  ansible.builtin.import_tasks: render.yml
+
+- name: Write the CSV and import it into Homebox
+  ansible.builtin.import_tasks: publish.yml

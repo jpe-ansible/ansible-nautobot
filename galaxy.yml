@@ -16,6 +16,7 @@ dependencies:
   community.proxmox: "*"
   amazon.aws: "*"
   ansible.utils: "*"
+  community.general: "*"
 tags:
   - nautobot
   - infrastructure
