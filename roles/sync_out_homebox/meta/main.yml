@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  author: jpe-ansible
+  description: Feed Nautobot hardware records into Homebox as a CSV import.
+  company: jpe-ansible
+  license: Apache-2.0
+  min_ansible_version: "2.17"
+  galaxy_tags:
+    - nautobot
+    - homebox
+dependencies: []
