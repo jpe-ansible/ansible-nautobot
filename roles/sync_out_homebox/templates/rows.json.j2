@@ -1,0 +1,116 @@
+{#- Builds the Homebox rows from the Nautobot snapshot and returns {"rows": [...], "excluded": [...]} as JSON.
+    A row is {"ref": <HB.import_ref>, "cells": {<column>: <value>}}. -#}
+{%- macro loc_path(loc) -%}
+{%- if loc and loc.get('parent') -%}{{ loc_path(loc.get('parent')) }}{{ ' / ' }}{%- endif -%}
+{%- if loc -%}{{ loc.name | replace('/', '-') }}{%- endif -%}
+{%- endmacro -%}
+{#- Custom field cells for one Nautobot record, as a JSON object keyed by Homebox column. -#}
+{%- macro custom_cells(rec) -%}
+{%- set out = namespace(cells={}) -%}
+{%- for cf in sync_out_homebox_custom_fields -%}
+{%- set raw = rec['cf_' ~ cf.key] | default(none) -%}
+{%- if raw is none or (raw | string) == '' -%}
+{%- set value = '' -%}
+{%- elif cf.divisor is defined and cf.divisor -%}
+{%- set value = '%.2f' | format((raw | float) / (cf.divisor | float)) -%}
+{%- else -%}
+{%- set value = raw | string -%}
+{%- endif -%}
+{%- set out.cells = out.cells | combine({cf.column: value}) -%}
+{%- endfor -%}
+{{ out.cells | to_json }}
+{%- endmacro -%}
+{%- macro row(ref, parent, location, tags, archived, name, notes, manufacturer, model_number, serial, asset_tag, custom) -%}
+{%- set cells = {
+  'HB.import_ref': ref,
+  'HB.parent_import_ref': parent,
+  'HB.location': location,
+  'HB.tags': (tags + sync_out_homebox_extra_tags) | unique | sort | join('; '),
+  'HB.asset_id': '',
+  'HB.archived': archived | string | lower,
+  'HB.name': name,
+  'HB.quantity': '1',
+  'HB.description': '',
+  'HB.notes': notes,
+  'HB.manufacturer': manufacturer,
+  'HB.model_number': model_number,
+  'HB.serial_number': serial or ''
+} | combine(custom) -%}
+{%- if sync_out_homebox_asset_tag_column and asset_tag -%}
+{%- set cells = cells | combine({sync_out_homebox_asset_tag_column: asset_tag}) -%}
+{%- endif -%}
+{{ {'ref': ref, 'parent': parent, 'cells': cells} | to_json }}
+{%- endmacro -%}
+{%- set data = sync_out_homebox_snapshot.data -%}
+{%- set ns = namespace(rows=[], excluded=[], renamed=[], used=[], dref={}, dloc={}) -%}
+{#- Devices are always fed, and the first pass records each device's ref and location for its children.
+    Nautobot keeps an asset tag unique per model, not across models, so a module or inventory item that
+    repeats a tag already in use falls back to its UUID ref and is listed under "renamed". -#}
+{%- for d in data.devices -%}
+{%- set ref = d.asset_tag or (sync_out_homebox_ref_prefix ~ d.id) -%}
+{%- set ns.used = ns.used + [ref] -%}
+{%- set loc = ((loc_path(d.location) | trim) if d.location else '') or sync_out_homebox_default_location -%}
+{%- set ns.dref = ns.dref | combine({d.id: ref}) -%}
+{%- set ns.dloc = ns.dloc | combine({d.id: loc}) -%}
+{%- set maker = (d.device_type.manufacturer.name if d.device_type and d.device_type.manufacturer else '') -%}
+{%- set ns.rows = ns.rows + [row(ref, '', loc, d.tags | map(attribute='name') | list,
+                                 d.status.name in sync_out_homebox_archived_statuses, d.name, '', maker,
+                                 (d.device_type.model if d.device_type else ''), d.serial, d.asset_tag,
+                                 custom_cells(d) | from_json) | from_json] -%}
+{%- endfor -%}
+{#- Modules: force-include, then exclude pattern, then price floor, then include. -#}
+{%- set floor = sync_out_homebox_min_price_cents | int -%}
+{%- for m in data.modules -%}
+{%- set tag = m.asset_tag or '' -%}
+{%- set plain = tag or (sync_out_homebox_ref_prefix ~ m.id) -%}
+{%- set ref = plain if plain not in ns.used else (sync_out_homebox_ref_prefix ~ m.id) -%}
+{%- set price = m['cf_' ~ sync_out_homebox_price_field] | default(none) -%}
+{%- set price_known = price is not none and (price | string) != '' -%}
+{%- set prefixes = sync_out_homebox_always_include_asset_tag_prefixes -%}
+{%- set patterns = sync_out_homebox_exclude_asset_tag_patterns -%}
+{%- set forced = (tag != '' and prefixes | length > 0 and tag is match('(?:' ~ (prefixes | map('regex_escape') | join('|')) ~ ')'))
+                 or (sync_out_homebox_include_tag != '' and sync_out_homebox_include_tag in (m.tags | map(attribute='name') | list)) -%}
+{%- set patterned = tag != '' and patterns | length > 0 and tag is search('(?:' ~ (patterns | join('|')) ~ ')') -%}
+{%- set cheap = floor > 0 and price_known and (price | int) < floor -%}
+{%- if forced or not (patterned or cheap) -%}
+{%- set ns.used = ns.used + [ref] -%}
+{%- if ref != plain -%}{%- set ns.renamed = ns.renamed + [{'ref': ref, 'tag': plain}] -%}{%- endif -%}
+{%- set bay = m.parent_module_bay -%}
+{%- set host = namespace(id='') -%}
+{%- if bay and bay.parent_device -%}
+{%- set host.id = bay.parent_device.id -%}
+{%- elif bay and bay.parent_module and bay.parent_module.parent_module_bay and bay.parent_module.parent_module_bay.parent_device -%}
+{%- set host.id = bay.parent_module.parent_module_bay.parent_device.id -%}
+{%- endif -%}
+{%- set installed = host.id != '' and host.id in ns.dref -%}
+{%- set own_loc = (loc_path(m.location) | trim) if m.location else '' -%}
+{%- set loc = ns.dloc[host.id] if installed else (own_loc or sync_out_homebox_default_location) -%}
+{%- set mtype = m.module_type -%}
+{%- set model = mtype.model if mtype and mtype.model else '' -%}
+{%- set ns.rows = ns.rows + [row(ref, (ns.dref[host.id] if installed else ''), loc, m.tags | map(attribute='name') | list,
+                                 m.status.name in sync_out_homebox_archived_statuses,
+                                 ((model ~ ' (' ~ tag ~ ')') if model and tag else (model or tag or ref)),
+                                 (mtype.comments if mtype and mtype.comments else ''),
+                                 (mtype.manufacturer.name if mtype and mtype.manufacturer else ''),
+                                 (mtype.part_number if mtype and mtype.part_number else ''), m.serial, tag,
+                                 custom_cells(m) | from_json) | from_json] -%}
+{%- else -%}
+{%- set ns.excluded = ns.excluded + [{'ref': ref, 'reason': ('pattern' if patterned else 'price')}] -%}
+{%- endif -%}
+{%- endfor -%}
+{#- Inventory items (drives and parts inside a device) are always fed, as children of their device. -#}
+{%- for i in data.inventory_items -%}
+{%- set plain = i.asset_tag or (sync_out_homebox_ref_prefix ~ i.id) -%}
+{%- set ref = plain if plain not in ns.used else (sync_out_homebox_ref_prefix ~ i.id) -%}
+{%- set ns.used = ns.used + [ref] -%}
+{%- if ref != plain -%}{%- set ns.renamed = ns.renamed + [{'ref': ref, 'tag': plain}] -%}{%- endif -%}
+{%- set host_id = i.device.id if i.device else '' -%}
+{%- set installed = host_id != '' and host_id in ns.dref -%}
+{%- set ns.rows = ns.rows + [row(ref, (ns.dref[host_id] if installed else ''),
+                                 (ns.dloc[host_id] if installed else sync_out_homebox_default_location),
+                                 i.tags | map(attribute='name') | list, false, i.name, '',
+                                 (i.manufacturer.name if i.manufacturer else ''), (i.part_id or ''), i.serial,
+                                 i.asset_tag, {}) | from_json] -%}
+{%- endfor -%}
+{{ {'rows': ns.rows | sort(attribute='ref', case_sensitive=true), 'excluded': ns.excluded | sort(attribute='ref', case_sensitive=true),
+    'renamed': ns.renamed | sort(attribute='ref', case_sensitive=true)} | to_json }}

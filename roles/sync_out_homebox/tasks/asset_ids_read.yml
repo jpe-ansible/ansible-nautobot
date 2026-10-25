@@ -1,0 +1,23 @@
+---
+- name: Require an https Homebox URL
+  ansible.builtin.include_role:
+    name: url_guard
+  vars:
+    url_guard_urls:
+      - {name: sync_out_homebox_url, url: "{{ sync_out_homebox_url }}"}
+
+- name: Export the entities Homebox already holds
+  ansible.builtin.uri:
+    url: "{{ (sync_out_homebox_url | regex_replace('/+$', '')) ~ '/api/v1/entities/export' }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ sync_out_homebox_api_key }}"
+    return_content: true
+    status_code: 200
+    validate_certs: true
+  register: sync_out_homebox_export
+  changed_when: false
+  check_mode: false
+  delegate_to: localhost
+  run_once: true
+  no_log: true

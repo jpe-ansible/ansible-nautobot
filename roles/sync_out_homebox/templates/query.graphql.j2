@@ -1,0 +1,46 @@
+{#- One GraphQL request for every record the feed reads. Custom fields are read as cf_<key>. -#}
+{%- macro location_tree(levels) -%}
+name{% if levels > 1 %} parent { {{ location_tree(levels - 1) }} }{% endif %}
+{%- endmacro -%}
+{%- set cf_keys = (sync_out_homebox_custom_fields | map(attribute='key') | list + [sync_out_homebox_price_field]) | unique | list -%}
+query {
+  devices {
+    id
+    name
+    asset_tag
+    serial
+    status { name }
+    tags { name }
+    location { {{ location_tree(sync_out_homebox_location_depth | int) }} }
+    device_type { model manufacturer { name } }
+{% for key in cf_keys %}
+    cf_{{ key }}
+{% endfor %}
+  }
+  modules {
+    id
+    asset_tag
+    serial
+    status { name }
+    tags { name }
+    location { {{ location_tree(sync_out_homebox_location_depth | int) }} }
+    module_type { model part_number comments manufacturer { name } }
+    parent_module_bay {
+      parent_device { id }
+      parent_module { id parent_module_bay { parent_device { id } } }
+    }
+{% for key in cf_keys %}
+    cf_{{ key }}
+{% endfor %}
+  }
+  inventory_items {
+    id
+    name
+    asset_tag
+    serial
+    part_id
+    tags { name }
+    manufacturer { name }
+    device { id }
+  }
+}

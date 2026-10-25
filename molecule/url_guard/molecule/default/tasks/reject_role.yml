@@ -7,6 +7,7 @@
         tasks_from: fetch.yml
       vars:
         sync_out_nautobot_url: http://nautobot.example.test
+        sync_out_homebox_nautobot_url: http://nautobot.example.test
         drift_nautobot_url: http://nautobot.example.test
         preflight_nautobot_url: http://nautobot.example.test
 

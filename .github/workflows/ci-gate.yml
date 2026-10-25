@@ -37,6 +37,11 @@ jobs:
           - 'roles/sync_out/**'
           - 'roles/url_guard/**'
           - 'molecule/sync_out/**'
+        sync_out_homebox:
+          - 'roles/sync_out_homebox/**'
+          - 'roles/url_guard/**'
+          - 'molecule/sync_out_homebox/**'
+          - 'requirements*'
         drift:
           - 'roles/drift/**'
           - 'roles/url_guard/**'
@@ -77,7 +82,7 @@ jobs:
       # An empty output means the full suite (a promotion to main); every scenario then runs.
       scenarios: >-
         ${{ needs.changes.outputs.molecule_scenarios
-        || '["server", "sync_in", "sync_out", "preflight", "drift", "url_guard", "live"]' }}
+        || '["server", "sync_in", "sync_out", "sync_out_homebox", "preflight", "drift", "url_guard", "live"]' }}
       scenario_discovery: caller_supplied
       runner_label: ubuntu-latest
       pull_request_timeout_minutes: 32

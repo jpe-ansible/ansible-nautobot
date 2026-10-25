@@ -1,0 +1,80 @@
+---
+argument_specs:
+  main:
+    short_description: Feed Nautobot hardware records into Homebox as a CSV import.
+    options:
+      sync_out_homebox_nautobot_url:
+        type: str
+        required: true
+      sync_out_homebox_read_token:
+        type: str
+        required: true
+        no_log: true
+      sync_out_homebox_url:
+        type: str
+        required: false
+        description: Homebox base URL. Required when sync_out_homebox_apply is true.
+      sync_out_homebox_api_key:
+        type: str
+        required: false
+        no_log: true
+        description: Homebox API key. Required when sync_out_homebox_apply is true.
+      sync_out_homebox_apply:
+        type: bool
+        default: false
+      sync_out_homebox_artifact_path:
+        type: str
+        default: ""
+      sync_out_homebox_preserve_asset_ids:
+        type: bool
+        default: true
+      sync_out_homebox_location_depth:
+        type: int
+        default: 4
+      sync_out_homebox_default_location:
+        type: str
+        default: Unassigned
+      sync_out_homebox_ref_prefix:
+        type: str
+        default: "nautobot-"
+      sync_out_homebox_always_include_asset_tag_prefixes:
+        type: list
+        elements: str
+        default: []
+      sync_out_homebox_include_tag:
+        type: str
+        default: ""
+      sync_out_homebox_exclude_asset_tag_patterns:
+        type: list
+        elements: str
+        default: []
+      sync_out_homebox_min_price_cents:
+        type: int
+        default: 0
+      sync_out_homebox_price_field:
+        type: str
+        default: purchase_price_cents
+      sync_out_homebox_extra_tags:
+        type: list
+        elements: str
+        default: []
+      sync_out_homebox_archived_statuses:
+        type: list
+        elements: str
+        default: [Decommissioning, Offline]
+      sync_out_homebox_custom_fields:
+        type: list
+        elements: dict
+        options:
+          key:
+            type: str
+            required: true
+          column:
+            type: str
+            required: true
+          divisor:
+            type: int
+            required: false
+      sync_out_homebox_asset_tag_column:
+        type: str
+        default: "HB.field.Asset tag"

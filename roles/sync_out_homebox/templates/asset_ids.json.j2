@@ -1,0 +1,8 @@
+{#- Import ref to asset ID for every entity in the Homebox export that holds both, as a JSON object. -#}
+{%- set ids = namespace(map={}) -%}
+{%- for held in sync_out_homebox_export.content | community.general.from_csv -%}
+{%- if held['HB.import_ref'] and held['HB.asset_id'] -%}
+{%- set ids.map = ids.map | combine({held['HB.import_ref']: held['HB.asset_id']}) -%}
+{%- endif -%}
+{%- endfor -%}
+{{ ids.map | to_json }}

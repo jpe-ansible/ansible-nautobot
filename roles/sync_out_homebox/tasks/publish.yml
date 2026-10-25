@@ -1,0 +1,28 @@
+---
+- name: Write the import CSV to the artifact path
+  ansible.builtin.copy:
+    content: "{{ sync_out_homebox_csv }}"
+    dest: "{{ sync_out_homebox_artifact_path }}"
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+  when: sync_out_homebox_artifact_path | length > 0
+
+- name: Import the CSV into Homebox
+  ansible.builtin.uri:
+    url: "{{ (sync_out_homebox_url | regex_replace('/+$', '')) ~ '/api/v1/entities/import' }}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ sync_out_homebox_api_key }}"
+    body_format: form-multipart
+    body:
+      csv:
+        content: "{{ sync_out_homebox_csv }}"
+        filename: homebox-import.csv
+        mime_type: text/csv
+    status_code: 204
+    validate_certs: true
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+  when: sync_out_homebox_apply | bool and not ansible_check_mode

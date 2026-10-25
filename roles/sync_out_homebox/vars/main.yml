@@ -1,0 +1,19 @@
+---
+# Columns every row carries, in order. Custom field columns and the asset tag column follow.
+sync_out_homebox_core_columns:
+  - HB.import_ref
+  - HB.parent_import_ref
+  - HB.location
+  - HB.tags
+  - HB.asset_id
+  - HB.archived
+  - HB.name
+  - HB.quantity
+  - HB.description
+  - HB.notes
+  - HB.manufacturer
+  - HB.model_number
+  - HB.serial_number
+
+# Import ref to asset ID from the current Homebox export; asset_ids.yml replaces it when the IDs are preserved.
+sync_out_homebox_asset_ids: {}
