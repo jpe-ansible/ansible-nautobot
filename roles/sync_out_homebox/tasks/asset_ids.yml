@@ -1,0 +1,7 @@
+---
+# Homebox writes an asset ID on every imported row, so a row without HB.asset_id is renumbered on every run.
+# Reading the current IDs back from the export keeps them stable; only new rows are numbered.
+- name: Map import refs to the asset IDs in the Homebox export
+  ansible.builtin.set_fact:
+    sync_out_homebox_asset_ids: "{{ lookup('ansible.builtin.template', 'asset_ids.json.j2') | from_json }}"
+  when: sync_out_homebox_export is defined and sync_out_homebox_export.content is defined

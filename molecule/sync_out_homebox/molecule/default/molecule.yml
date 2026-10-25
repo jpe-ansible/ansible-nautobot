@@ -1,0 +1,37 @@
+---
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ${MOLECULE_PROJECT_DIRECTORY}/../requirements.yml
+
+driver:
+  name: docker
+
+platforms:
+  - name: nautobot-role-test
+    image: mirror.gcr.io/geerlingguy/docker-debian12-ansible:latest
+    pre_build_image: true
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      interpreter_python: auto_silent
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/../../roles
+
+scenario:
+  name: default
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - converge
+    - idempotence
+    - verify
+    - cleanup
+    - destroy
+
+verifier:
+  name: ansible

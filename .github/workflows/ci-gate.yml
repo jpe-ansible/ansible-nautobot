@@ -18,15 +18,15 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    # renovate: datasource=git-refs depName=https://github.com/dryvist/.github currentValue=v1.12.1
-    uses: dryvist/.github/.github/workflows/_ansible-ci.yml@f9e8814ad8f82e4bc8cdaac73ee49b1ffa6d4cf2 # v1.12.1
+    uses: JacobPEvans/.github/.github/workflows/_ansible-ci.yml@v1
     with:
       molecule: false
-      molecule_scenario_filters: |
+      molecule_scenario_filters: &molecule_scenario_filters |
         server:
           - 'roles/server/**'
           - 'roles/url_guard/**'
           - 'molecule/server/**'
+          - '.github/workflows/**'
         sync_in:
           - 'roles/sync_in/**'
           - 'roles/url_guard/**'
@@ -37,6 +37,11 @@ jobs:
           - 'roles/sync_out/**'
           - 'roles/url_guard/**'
           - 'molecule/sync_out/**'
+        sync_out_homebox:
+          - 'roles/sync_out_homebox/**'
+          - 'roles/url_guard/**'
+          - 'molecule/sync_out_homebox/**'
+          - 'requirements*'
         drift:
           - 'roles/drift/**'
           - 'roles/url_guard/**'
@@ -59,21 +64,52 @@ jobs:
           - 'global_settings.yml'
           - 'molecule/live/**'
           - 'requirements*'
+          - '.github/workflows/**'
+
+  changes:
+    name: Detect Changes
+    uses: JacobPEvans/.github/.github/workflows/_ansible-changes.yml@v1
+    with:
+      molecule: false
+      molecule_scenario_filters: *molecule_scenario_filters
 
   molecule:
     name: Molecule
-    needs: ci
-    if: ${{ needs.ci.outputs.molecule == 'true' && needs.ci.outputs.molecule_scenarios != '[]' }}
-    uses: ./.github/workflows/_molecule.yml
+    needs: changes
+    if: ${{ needs.changes.outputs.molecule == 'true' && needs.changes.outputs.molecule_scenarios != '[]' }}
+    uses: JacobPEvans/.github/.github/workflows/_molecule.yml@v1
     with:
       # An empty output means the full suite (a promotion to main); every scenario then runs.
       scenarios: >-
-        ${{ needs.ci.outputs.molecule_scenarios
-        || '["server", "sync_in", "sync_out", "preflight", "drift", "url_guard", "live"]' }}
+        ${{ needs.changes.outputs.molecule_scenarios
+        || '["server", "sync_in", "sync_out", "sync_out_homebox", "preflight", "drift", "url_guard", "live"]' }}
+      scenario_discovery: caller_supplied
+      runner_label: ubuntu-latest
+      pull_request_timeout_minutes: 32
+      timeout_minutes: 360
+      python_version: "3.14"
+      python_install_mode: pip_requirements
+      requirements_files: '["requirements-test.txt", "requirements.txt"]'
+      ansible_home_mode: shared
+      molecule_roles_path: roles
+      galaxy_cache_enabled: false
+      galaxy_install_mode: collections_only
+      galaxy_retry_attempts: 1
+      galaxy_step_timeout_minutes: 360
+      galaxy_server_timeout_seconds: 0
+      fail_fast: false
+      docker_timeout_seconds: 0
+      docker_prune: false
+      molecule_workdir_mode: scenario_directory
+      molecule_scenario_arg: default
+      molecule_args: ""
+      doppler_enabled: false
+      test_secret_env_map: "{}"
+      use_homarr_token: false
 
   gate:
     name: Merge Gate
-    needs: [ci, molecule]
+    needs: [ci, changes, molecule]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     steps:

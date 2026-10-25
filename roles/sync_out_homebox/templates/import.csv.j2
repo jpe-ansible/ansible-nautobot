@@ -1,0 +1,13 @@
+{#- Renders the Homebox import CSV: one header line, then one line per row, each cell quoted only when needed. -#}
+{%- macro cell(value) -%}
+{%- set text = (value if value is not none else '') | string -%}
+{%- if text is search('[",\r\n]') -%}"{{ text | replace('"', '""') }}"{%- else -%}{{ text }}{%- endif -%}
+{%- endmacro -%}
+{%- set ns = namespace(lines=[]) -%}
+{%- set head -%}{%- for column in sync_out_homebox_columns -%}{{ cell(column) }}{{ ',' if not loop.last else '' }}{%- endfor -%}{%- endset -%}
+{%- set ns.lines = [head] -%}
+{%- for row in sync_out_homebox_rows -%}
+{%- set line -%}{%- for column in sync_out_homebox_columns -%}{%- if column == 'HB.asset_id' -%}{{ cell(sync_out_homebox_asset_ids[row.ref] | default('')) }}{%- else -%}{{ cell(row.cells[column] | default('')) }}{%- endif -%}{{ ',' if not loop.last else '' }}{%- endfor -%}{%- endset -%}
+{%- set ns.lines = ns.lines + [line] -%}
+{%- endfor -%}
+{{ ns.lines | join('\n') }}{{ '\n' }}

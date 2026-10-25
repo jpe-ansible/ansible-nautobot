@@ -1,7 +1,7 @@
 ---
 namespace: jpe_ansible
 name: nautobot
-version: 0.4.1  # x-release-please-version
+version: 0.4.2  # x-release-please-version
 readme: README.md
 authors:
   - jpe-ansible
@@ -16,6 +16,7 @@ dependencies:
   community.proxmox: "*"
   amazon.aws: "*"
   ansible.utils: "*"
+  community.general: "*"
 tags:
   - nautobot
   - infrastructure

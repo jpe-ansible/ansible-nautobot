@@ -1,0 +1,43 @@
+---
+# The CSV is always rendered into sync_out_homebox_csv; the POST to Homebox is opt-in.
+sync_out_homebox_apply: false
+# When set, the rendered CSV is also written to this path on the controller.
+sync_out_homebox_artifact_path: ""
+# On apply, read the asset IDs Homebox already holds so a repeat import keeps them.
+sync_out_homebox_preserve_asset_ids: true
+
+# The Nautobot location tree is read this many parents deep.
+sync_out_homebox_location_depth: 4
+# HB.location for an object without a Nautobot location. Homebox requires a location on every row.
+sync_out_homebox_default_location: Unassigned
+# HB.import_ref for an object without an asset tag is this prefix plus its Nautobot UUID.
+sync_out_homebox_ref_prefix: "nautobot-"
+
+# Scope. Devices and inventory items are always fed. A module is fed unless a rule excludes it.
+# Precedence, first match wins: force-include, exclude pattern, price floor, include.
+# A module is force-included when its asset tag starts with a listed prefix or it carries the include tag.
+sync_out_homebox_always_include_asset_tag_prefixes: []
+sync_out_homebox_include_tag: ""
+# Regular expressions searched anywhere in the asset tag; anchor with ^ to match a prefix.
+sync_out_homebox_exclude_asset_tag_patterns: []
+# A module whose known price (cents) is below this is excluded. 0 disables the floor.
+# A module with no recorded price is never excluded by the floor.
+sync_out_homebox_min_price_cents: 0
+# Nautobot custom field that holds the purchase price in cents.
+sync_out_homebox_price_field: purchase_price_cents
+
+# Homebox tags added to every row, besides the Nautobot tag names.
+sync_out_homebox_extra_tags: []
+# Nautobot status names fed as HB.archived.
+sync_out_homebox_archived_statuses:
+  - Decommissioning
+  - Offline
+
+# Nautobot custom field key to Homebox column. divisor turns a cents value into a price.
+sync_out_homebox_custom_fields:
+  - {key: purchase_date, column: HB.purchase_date}
+  - {key: purchase_price_cents, column: HB.purchase_price, divisor: 100}
+  - {key: vendor, column: HB.purchase_from}
+  - {key: receipt_ref, column: "HB.field.Receipt ref"}
+# Homebox custom field that carries the Nautobot asset tag, because HB.asset_id only holds digits. Empty skips it.
+sync_out_homebox_asset_tag_column: "HB.field.Asset tag"

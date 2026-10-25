@@ -1,0 +1,24 @@
+---
+- name: Require an https Nautobot URL
+  ansible.builtin.include_role:
+    name: url_guard
+  vars:
+    url_guard_urls:
+      - {name: sync_out_homebox_nautobot_url, url: "{{ sync_out_homebox_nautobot_url }}"}
+
+- name: Render the Nautobot GraphQL query
+  ansible.builtin.set_fact:
+    sync_out_homebox_query: "{{ lookup('ansible.builtin.template', 'query.graphql.j2') }}"
+
+- name: Read the Nautobot devices, modules and inventory items
+  networktocode.nautobot.graphql_info:
+    url: "{{ sync_out_homebox_nautobot_url }}"
+    token: "{{ sync_out_homebox_read_token }}"
+    validate_certs: true
+    query: "{{ sync_out_homebox_query }}"
+  register: sync_out_homebox_snapshot
+  changed_when: false
+  check_mode: false
+  delegate_to: localhost
+  run_once: true
+  no_log: true
