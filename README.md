@@ -40,6 +40,7 @@ roles:
 | `server` | Install and configure Nautobot, its service accounts and their tokens. |
 | `sync_in` | Load the Bootstrap data, the live Proxmox inventory and caller-supplied rows into Nautobot. |
 | `sync_out` | Build the export document from a saved GraphQL query and publish it to object storage. |
+| `sync_out_homebox` | Render Nautobot devices, modules and inventory items as a Homebox CSV import and upload it. |
 | `preflight` | Fail a run when published guest memory or storage intent contradicts Nautobot. |
 | `drift` | Compare Nautobot with its sources and send one event per run to a log collector. |
 
