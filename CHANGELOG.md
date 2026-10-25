@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.4.2...v0.5.0) (2026-10-25)
+
+
+### Features
+
+* **sync_out_homebox:** feed Nautobot hardware to Homebox as a CSV import ([#43](https://github.com/jpe-ansible/ansible-nautobot/issues/43)) ([8313469](https://github.com/jpe-ansible/ansible-nautobot/commit/8313469065a2c74ddc1d7b56227f3e7204d2053f))
+
 ## [0.4.2](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.4.1...v0.4.2) (2026-10-24)
 
 
