@@ -1,0 +1,228 @@
+---
+- name: Verify the Homebox feed with the deployment scope rules
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/fixtures/response.yml"
+  vars:
+    sync_out_homebox_snapshot: "{{ fixture_snapshot }}"
+    sync_out_homebox_min_price_cents: 500
+    sync_out_homebox_always_include_asset_tag_prefixes: [CPU, NET-DAC-3M]
+    sync_out_homebox_exclude_asset_tag_patterns: ['^NET-CLIP', '^NET-CAT6A-KEY']
+    expected_columns:
+      - HB.import_ref
+      - HB.parent_import_ref
+      - HB.location
+      - HB.tags
+      - HB.asset_id
+      - HB.archived
+      - HB.name
+      - HB.quantity
+      - HB.description
+      - HB.notes
+      - HB.manufacturer
+      - HB.model_number
+      - HB.serial_number
+      - HB.purchase_date
+      - HB.purchase_price
+      - HB.purchase_from
+      - HB.field.Receipt ref
+      - HB.field.Asset tag
+    # The same columns without dots, so a parsed row can be read as an attribute.
+    csv_fieldnames: "{{ expected_columns | map('regex_replace', '[.\\s]', '_') | list }}"
+  tasks:
+    - name: Build the rows
+      ansible.builtin.include_role:
+        name: sync_out_homebox
+        tasks_from: build.yml
+        public: true
+
+    - name: Render the CSV
+      ansible.builtin.include_role:
+        name: sync_out_homebox
+        tasks_from: render.yml
+        public: true
+
+    - name: Parse the rendered CSV the way Homebox reads it
+      ansible.builtin.set_fact:
+        csv_rows: "{{ (sync_out_homebox_csv | community.general.from_csv(fieldnames=csv_fieldnames))[1:] }}"
+
+    - name: Index the parsed rows by import ref
+      ansible.builtin.set_fact:
+        csv_by_ref: "{{ dict(csv_rows | map(attribute='HB_import_ref') | zip(csv_rows)) }}"
+
+    - name: Assert the header, the row set and the exclusions
+      ansible.builtin.assert:
+        that:
+          - sync_out_homebox_csv.splitlines()[0] == expected_columns | join(',')
+          - sync_out_homebox_csv is match('(?s).*\n$')
+          - csv_rows | length == sync_out_homebox_rows | length
+          - >-
+            sync_out_homebox_rows | map(attribute='ref') | list == [
+            'CPU-TEST-1', 'MISC-UNKNOWN-1', 'NESTED-1', 'NET-CABLE-12', 'NET-DAC-3M', 'SRV-ALPHA', 'SSD-TEST-1TB',
+            'nautobot-00000000-0000-4000-8000-0000000000a8', 'nautobot-00000000-0000-4000-8000-0000000000d2',
+            'nautobot-00000000-0000-4000-8000-0000000000e1', 'nautobot-00000000-0000-4000-8000-0000000000e2']
+          - >-
+            sync_out_homebox_excluded == [{'ref': 'NET-CABLE-3', 'reason': 'price'},
+            {'ref': 'NET-CLIP-400', 'reason': 'pattern'}]
+        fail_msg: The feed has the wrong header, rows or exclusions.
+
+    - name: Assert each kind of row
+      vars:
+        refs: "{{ sync_out_homebox_rows | map(attribute='ref') }}"
+        by_ref: "{{ dict(refs | zip(sync_out_homebox_rows | map(attribute='cells'))) }}"
+      ansible.builtin.assert:
+        that:
+          # A device: ref is its asset tag, location is the tree path, price is cents divided by 100.
+          - by_ref['SRV-ALPHA']['HB.location'] == 'homelab / rack'
+          - by_ref['SRV-ALPHA']['HB.parent_import_ref'] == ''
+          - by_ref['SRV-ALPHA']['HB.tags'] == 'lab'
+          - by_ref['SRV-ALPHA']['HB.manufacturer'] == 'Acme'
+          - by_ref['SRV-ALPHA']['HB.model_number'] == 'Model X'
+          - by_ref['SRV-ALPHA']['HB.serial_number'] == 'SN-ALPHA'
+          - by_ref['SRV-ALPHA']['HB.purchase_price'] == '1200.00'
+          - by_ref['SRV-ALPHA']['HB.purchase_date'] == '2026-01-02'
+          - by_ref['SRV-ALPHA']['HB.purchase_from'] == 'Example Vendor'
+          - by_ref['SRV-ALPHA']['HB.field.Receipt ref'] == 'PO-1'
+          - by_ref['SRV-ALPHA']['HB.field.Asset tag'] == 'SRV-ALPHA'
+          - by_ref['SRV-ALPHA']['HB.archived'] == 'false'
+          - by_ref['SRV-ALPHA']['HB.asset_id'] == ''
+          # A decommissioned device without an asset tag: ref from the UUID, archived, default location.
+          - by_ref['nautobot-00000000-0000-4000-8000-0000000000d2']['HB.archived'] == 'true'
+          - by_ref['nautobot-00000000-0000-4000-8000-0000000000d2']['HB.location'] == 'Unassigned'
+          - by_ref['nautobot-00000000-0000-4000-8000-0000000000d2']['HB.field.Asset tag'] is not defined
+          # A module in a bay: child of the host device, at the host location, with the module type notes.
+          - by_ref['CPU-TEST-1']['HB.parent_import_ref'] == 'SRV-ALPHA'
+          - by_ref['CPU-TEST-1']['HB.location'] == 'homelab / rack'
+          - by_ref['CPU-TEST-1']['HB.name'] == 'Xeon Test (CPU-TEST-1)'
+          - by_ref['CPU-TEST-1']['HB.model_number'] == 'CPU-PN-1'
+          - by_ref['CPU-TEST-1']['HB.notes'] == 'first line\nsecond line'
+          # A module nested in another module's bay attaches to the host device.
+          - by_ref['NESTED-1']['HB.parent_import_ref'] == 'SRV-ALPHA'
+          - by_ref['NESTED-1']['HB.location'] == 'homelab / rack'
+          # A shelf spare: no parent, at its own location, Nautobot tags carried over.
+          - by_ref['SSD-TEST-1TB']['HB.parent_import_ref'] == ''
+          - by_ref['SSD-TEST-1TB']['HB.location'] == 'homelab / spares'
+          - by_ref['SSD-TEST-1TB']['HB.tags'] == 'spare'
+          - by_ref['SSD-TEST-1TB']['HB.purchase_price'] == '50.00'
+          # A drive inside a device: ref from the UUID, child of the device.
+          - by_ref['nautobot-00000000-0000-4000-8000-0000000000e1']['HB.parent_import_ref'] == 'SRV-ALPHA'
+          - by_ref['nautobot-00000000-0000-4000-8000-0000000000e1']['HB.location'] == 'homelab / rack'
+          - by_ref['nautobot-00000000-0000-4000-8000-0000000000e1']['HB.serial_number'] == 'SN-NVME'
+          - by_ref['nautobot-00000000-0000-4000-8000-0000000000e1']['HB.model_number'] == 'PN-NVME'
+          # An item that repeats a module's asset tag keeps its own row under the UUID ref; the tag stays in its cell.
+          - by_ref['nautobot-00000000-0000-4000-8000-0000000000e2']['HB.parent_import_ref'] == 'SRV-ALPHA'
+          - by_ref['nautobot-00000000-0000-4000-8000-0000000000e2']['HB.field.Asset tag'] == 'CPU-TEST-1'
+          - by_ref['CPU-TEST-1']['HB.name'] == 'Xeon Test (CPU-TEST-1)'
+          - >-
+            sync_out_homebox_renamed == [{'ref': 'nautobot-00000000-0000-4000-8000-0000000000e2',
+            'tag': 'CPU-TEST-1'}]
+        fail_msg: A row does not carry the expected Homebox columns.
+
+    - name: Assert the scope precedence cases
+      ansible.builtin.assert:
+        that:
+          # A force-include prefix beats the price floor: a CPU priced under the floor stays.
+          - "'CPU-TEST-1' in sync_out_homebox_rows | map(attribute='ref')"
+          # An active DAC named by its exact tag beats the floor too.
+          - "'NET-DAC-3M' in sync_out_homebox_rows | map(attribute='ref')"
+          # An exclude pattern drops a clip with no recorded price.
+          - "'NET-CLIP-400' not in sync_out_homebox_rows | map(attribute='ref')"
+          # An unknown price never excludes by itself.
+          - "'MISC-UNKNOWN-1' in sync_out_homebox_rows | map(attribute='ref')"
+          # A known price under the floor is excluded; one over it stays.
+          - "'NET-CABLE-3' not in sync_out_homebox_rows | map(attribute='ref')"
+          - "'NET-CABLE-12' in sync_out_homebox_rows | map(attribute='ref')"
+
+    - name: Assert CSV quoting survives a round trip
+      ansible.builtin.assert:
+        that:
+          - csv_by_ref['nautobot-00000000-0000-4000-8000-0000000000a8']['HB_name'] == 'Widget, 3" "Pro"'
+          - csv_by_ref['CPU-TEST-1']['HB_notes'] == 'first line\nsecond line'
+          - sync_out_homebox_csv is search('"Widget, 3"" ""Pro"""')
+
+- name: Verify the include tag beats an exclude pattern
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/fixtures/response.yml"
+  vars:
+    sync_out_homebox_snapshot: "{{ fixture_snapshot }}"
+    sync_out_homebox_min_price_cents: 500
+    sync_out_homebox_exclude_asset_tag_patterns: ['^NET-CLIP']
+    sync_out_homebox_include_tag: keep
+  tasks:
+    - name: Build the rows
+      ansible.builtin.include_role:
+        name: sync_out_homebox
+        tasks_from: build.yml
+        public: true
+
+    - name: Assert the tagged clip is fed and only the under-floor modules are not
+      ansible.builtin.assert:
+        that:
+          - "'NET-CLIP-400' in sync_out_homebox_rows | map(attribute='ref')"
+          - >-
+            sync_out_homebox_excluded | map(attribute='ref') | list
+            == ['CPU-TEST-1', 'NET-CABLE-3', 'NET-DAC-3M']
+
+- name: Verify the role defaults feed every record
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/fixtures/response.yml"
+  vars:
+    sync_out_homebox_snapshot: "{{ fixture_snapshot }}"
+  tasks:
+    - name: Build the rows
+      ansible.builtin.include_role:
+        name: sync_out_homebox
+        tasks_from: build.yml
+        public: true
+
+    - name: Assert nothing is excluded without a scope rule
+      ansible.builtin.assert:
+        that:
+          - sync_out_homebox_excluded == []
+          - >-
+            sync_out_homebox_rows | length == fixture_snapshot.data.devices | length
+            + fixture_snapshot.data.modules | length + fixture_snapshot.data.inventory_items | length
+
+- name: Verify existing Homebox asset IDs are kept
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/fixtures/response.yml"
+  vars:
+    sync_out_homebox_snapshot: "{{ fixture_snapshot }}"
+    sync_out_homebox_export: {content: "{{ fixture_export_csv }}"}
+    csv_fieldnames: "{{ sync_out_homebox_columns | map('regex_replace', '[.\\s]', '_') | list }}"
+  tasks:
+    - name: Build the rows
+      ansible.builtin.include_role:
+        name: sync_out_homebox
+        tasks_from: build.yml
+        public: true
+
+    - name: Map the refs to the asset IDs in the export
+      ansible.builtin.include_role:
+        name: sync_out_homebox
+        tasks_from: asset_ids.yml
+        public: true
+
+    - name: Render the CSV
+      ansible.builtin.include_role:
+        name: sync_out_homebox
+        tasks_from: render.yml
+        public: true
+
+    - name: Assert existing refs keep their asset ID and new refs get none
+      vars:
+        parsed: "{{ (sync_out_homebox_csv | community.general.from_csv(fieldnames=csv_fieldnames))[1:] }}"
+        held_by_ref: "{{ dict(parsed | map(attribute='HB_import_ref') | zip(parsed)) }}"
+      ansible.builtin.assert:
+        that:
+          - "sync_out_homebox_asset_ids == {'SRV-ALPHA': '000-001', 'CPU-TEST-1': '000-002', 'OTHER-1': '000-003'}"
+          - held_by_ref['SRV-ALPHA']['HB_asset_id'] == '000-001'
+          - held_by_ref['CPU-TEST-1']['HB_asset_id'] == '000-002'
+          - held_by_ref['SSD-TEST-1TB']['HB_asset_id'] == ''

@@ -1,0 +1,171 @@
+---
+# Synthetic Nautobot GraphQL response in the shape the role queries. No real names, serials or tags.
+fixture_snapshot:
+  data:
+    devices:
+      - id: "00000000-0000-4000-8000-0000000000d1"
+        name: srv-alpha
+        asset_tag: SRV-ALPHA
+        serial: SN-ALPHA
+        status: {name: Active}
+        tags: [{name: lab}]
+        location: {name: rack, parent: {name: homelab}}
+        device_type: {model: Model X, manufacturer: {name: Acme}}
+        cf_purchase_date: "2026-01-02"
+        cf_purchase_price_cents: 120000
+        cf_vendor: Example Vendor
+        cf_receipt_ref: PO-1
+      - id: "00000000-0000-4000-8000-0000000000d2"
+        name: desk-beta
+        asset_tag: null
+        serial: null
+        status: {name: Decommissioning}
+        tags: []
+        location: null
+        device_type: {model: Model Y, manufacturer: null}
+        cf_purchase_date: null
+        cf_purchase_price_cents: null
+        cf_vendor: null
+        cf_receipt_ref: null
+    modules:
+      - id: "00000000-0000-4000-8000-0000000000a1"
+        asset_tag: CPU-TEST-1
+        serial: SN-CPU
+        status: {name: Active}
+        tags: []
+        location: null
+        module_type:
+          model: Xeon Test
+          part_number: CPU-PN-1
+          comments: "first line\nsecond line"
+          manufacturer: {name: Acme}
+        parent_module_bay: {parent_device: {id: "00000000-0000-4000-8000-0000000000d1"}, parent_module: null}
+        cf_purchase_date: "2026-02-03"
+        cf_purchase_price_cents: 300
+        cf_vendor: null
+        cf_receipt_ref: null
+      - id: "00000000-0000-4000-8000-0000000000a2"
+        asset_tag: SSD-TEST-1TB
+        serial: null
+        status: {name: Planned}
+        tags: [{name: spare}]
+        location: {name: spares, parent: {name: homelab}}
+        module_type: {model: SSD Test 1TB, part_number: null, comments: null, manufacturer: {name: Acme}}
+        parent_module_bay: null
+        cf_purchase_date: null
+        cf_purchase_price_cents: 5000
+        cf_vendor: null
+        cf_receipt_ref: null
+      - id: "00000000-0000-4000-8000-0000000000a3"
+        asset_tag: NET-CLIP-400
+        serial: null
+        status: {name: Inventory}
+        tags: [{name: keep}]
+        location: {name: spares, parent: {name: homelab}}
+        module_type: {model: Cable clips, part_number: null, comments: null, manufacturer: null}
+        parent_module_bay: null
+        cf_purchase_date: null
+        cf_purchase_price_cents: null
+        cf_vendor: null
+        cf_receipt_ref: null
+      - id: "00000000-0000-4000-8000-0000000000a4"
+        asset_tag: MISC-UNKNOWN-1
+        serial: null
+        status: {name: Inventory}
+        tags: []
+        location: {name: spares, parent: {name: homelab}}
+        module_type: {model: Unpriced part, part_number: null, comments: null, manufacturer: null}
+        parent_module_bay: null
+        cf_purchase_date: null
+        cf_purchase_price_cents: null
+        cf_vendor: null
+        cf_receipt_ref: null
+      - id: "00000000-0000-4000-8000-0000000000a5"
+        asset_tag: NET-CABLE-3
+        serial: null
+        status: {name: Inventory}
+        tags: []
+        location: {name: spares, parent: {name: homelab}}
+        module_type: {model: Cheap cable, part_number: null, comments: null, manufacturer: null}
+        parent_module_bay: null
+        cf_purchase_date: null
+        cf_purchase_price_cents: 300
+        cf_vendor: null
+        cf_receipt_ref: null
+      - id: "00000000-0000-4000-8000-0000000000a6"
+        asset_tag: NET-CABLE-12
+        serial: null
+        status: {name: Inventory}
+        tags: []
+        location: {name: spares, parent: {name: homelab}}
+        module_type: {model: Pricier cable, part_number: null, comments: null, manufacturer: null}
+        parent_module_bay: null
+        cf_purchase_date: null
+        cf_purchase_price_cents: 1200
+        cf_vendor: null
+        cf_receipt_ref: null
+      - id: "00000000-0000-4000-8000-0000000000a7"
+        asset_tag: NET-DAC-3M
+        serial: null
+        status: {name: Inventory}
+        tags: []
+        location: {name: spares, parent: {name: homelab}}
+        module_type: {model: Active DAC 3m, part_number: null, comments: null, manufacturer: null}
+        parent_module_bay: null
+        cf_purchase_date: null
+        cf_purchase_price_cents: 300
+        cf_vendor: null
+        cf_receipt_ref: null
+      - id: "00000000-0000-4000-8000-0000000000a8"
+        asset_tag: null
+        serial: null
+        status: {name: Inventory}
+        tags: []
+        location: {name: spares, parent: {name: homelab}}
+        module_type: {model: 'Widget, 3" "Pro"', part_number: null, comments: null, manufacturer: null}
+        parent_module_bay: null
+        cf_purchase_date: null
+        cf_purchase_price_cents: null
+        cf_vendor: null
+        cf_receipt_ref: null
+      - id: "00000000-0000-4000-8000-0000000000a9"
+        asset_tag: NESTED-1
+        serial: null
+        status: {name: Active}
+        tags: []
+        location: null
+        module_type: {model: Daughter card, part_number: null, comments: null, manufacturer: null}
+        parent_module_bay:
+          parent_device: null
+          parent_module:
+            id: "00000000-0000-4000-8000-0000000000a1"
+            parent_module_bay: {parent_device: {id: "00000000-0000-4000-8000-0000000000d1"}}
+        cf_purchase_date: null
+        cf_purchase_price_cents: null
+        cf_vendor: null
+        cf_receipt_ref: null
+    inventory_items:
+      - id: "00000000-0000-4000-8000-0000000000e1"
+        name: nvme0n1
+        asset_tag: null
+        serial: SN-NVME
+        part_id: PN-NVME
+        tags: []
+        manufacturer: {name: Acme}
+        device: {id: "00000000-0000-4000-8000-0000000000d1"}
+      # Repeats the asset tag of a module: Nautobot keeps tags unique per model only.
+      - id: "00000000-0000-4000-8000-0000000000e2"
+        name: duplicate-tag-item
+        asset_tag: CPU-TEST-1
+        serial: null
+        part_id: null
+        tags: []
+        manufacturer: null
+        device: {id: "00000000-0000-4000-8000-0000000000d1"}
+
+# A Homebox export that holds two of the refs above, with the asset IDs Homebox gave them.
+fixture_export_csv: |
+  HB.import_ref,HB.parent_import_ref,HB.location,HB.tags,HB.asset_id,HB.name
+  SRV-ALPHA,,homelab / rack,lab,000-001,srv-alpha
+  CPU-TEST-1,SRV-ALPHA,homelab / rack,,000-002,Xeon Test (CPU-TEST-1)
+  OTHER-1,,Garage,,000-003,Something Homebox only knows
