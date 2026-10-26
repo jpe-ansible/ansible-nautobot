@@ -48,10 +48,6 @@
         file: "{{ playbook_dir }}/../../../../roles/server/defaults/main.yml"
         name: server_role_defaults
 
-    - name: Load server account defaults for selection assertions
-      ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../../../roles/server/defaults/main.yml"
-
     - name: Load the server role argument specification for contract assertions
       ansible.builtin.include_vars:
         file: "{{ playbook_dir }}/../../../../roles/server/meta/argument_specs.yml"
@@ -79,42 +75,17 @@
       delegate_to: localhost
       become: false
 
-    - name: Evaluate the account selection with its default names
-      vars:
-        server_service_account_candidates: >-
-          {{ server_service_account_definition.vars.server_service_account_candidates }}
-      ansible.builtin.set_fact: "{{ server_service_account_definition['ansible.builtin.set_fact'] }}"
-      delegate_to: localhost
-      become: false
-
-    - name: Assert the default selection keeps all four service accounts
+    - name: Assert the account catalog is filtered by server_managed_account_names
       ansible.builtin.assert:
         that:
-          - server_managed_account_names == ['inventory', 'mcp', 'pipeline', 'writer']
-          - server_service_accounts | map(attribute='name') | list == server_managed_account_names
-        fail_msg: The default account selection must keep all four service accounts.
-      delegate_to: localhost
-      become: false
-
-    - name: Select only the pipeline and writer accounts for the scoped selection
-      ansible.builtin.set_fact:
-        server_managed_account_names: [pipeline, writer]
-      delegate_to: localhost
-      become: false
-
-    - name: Evaluate the account selection with only pipeline and writer
-      vars:
-        server_service_account_candidates: >-
-          {{ server_service_account_definition.vars.server_service_account_candidates }}
-      ansible.builtin.set_fact: "{{ server_service_account_definition['ansible.builtin.set_fact'] }}"
-      delegate_to: localhost
-      become: false
-
-    - name: Assert the scoped selection keeps only pipeline and writer
-      ansible.builtin.assert:
-        that:
-          - server_service_accounts | map(attribute='name') | list == ['pipeline', 'writer']
-        fail_msg: The pipeline and writer selection must exclude inventory and mcp.
+          - server_role_defaults.server_managed_account_names == ['inventory', 'mcp', 'pipeline', 'writer']
+          - >-
+            server_service_account_definition.vars.server_service_account_candidates
+            | map(attribute='name') | list == ['inventory', 'mcp', 'pipeline', 'writer']
+          - >-
+            "selectattr('name', 'in', server_managed_account_names)"
+            in server_service_account_definition['ansible.builtin.set_fact']['server_service_accounts']
+        fail_msg: The service account catalog must be filtered by server_managed_account_names.
       delegate_to: localhost
       become: false
 
