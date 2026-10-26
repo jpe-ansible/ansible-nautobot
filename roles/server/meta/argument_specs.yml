@@ -105,6 +105,11 @@ argument_specs:
         type: bool
         default: true
         description: Reconcile Nautobot service accounts, permissions, tokens and published token fields.
+      server_managed_account_names:
+        type: list
+        elements: str
+        default: [inventory, mcp, pipeline, writer]
+        description: Names of the service accounts whose permissions and tokens this run reconciles and sweeps.
       server_secret_key:
         type: str
         no_log: true
