@@ -16,8 +16,8 @@
             if server_openbao_addr | length > 0 else []) }}
 
 - name: Define the managed Nautobot service accounts
-  ansible.builtin.set_fact:
-    server_service_accounts:
+  vars:
+    server_service_account_candidates:
       - name: inventory
         username: "{{ server_inventory_username }}"
         email: "{{ server_inventory_username }}@{{ server_ui_fqdn }}"
@@ -112,6 +112,11 @@
             actions: [view, add, delete]
             constraints:
               user: $user
+  ansible.builtin.set_fact:
+    server_service_accounts: >-
+      {{ server_service_account_candidates
+      | selectattr('name', 'in', server_managed_account_names)
+      | list }}
   changed_when: false
   no_log: true
 

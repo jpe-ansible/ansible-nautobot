@@ -3,7 +3,8 @@
 Installs and configures Nautobot with Redis, application settings and systemd units. With `server_manage_app` true,
 the role also runs migrations and creates the first superuser if absent. With `server_manage_app` and
 `server_manage_accounts` true, it also reconciles service accounts, object permissions, API tokens and published token
-fields.
+fields for the accounts named by `server_managed_account_names`. The default selects `inventory`, `mcp`, `pipeline` and
+`writer`; every account lookup, publication and token sweep is limited to that selection.
 
 ## Prerequisites
 
@@ -34,7 +35,8 @@ fields.
 `meta/argument_specs.yml` lists every input with its type, and `defaults/main.yml` holds every default, including the
 Renovate-managed package pins. Set `server_manage_app: false` to render configuration and units without touching the
 application. Set `server_manage_accounts: false` to skip service account, permission, token and token-field publication
-reconciliation while keeping application management enabled.
+reconciliation while keeping application management enabled. Set `server_managed_account_names` to a subset of the four
+default names when one run must manage only those accounts.
 
 ## What the role manages
 

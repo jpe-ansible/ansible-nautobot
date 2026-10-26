@@ -66,12 +66,33 @@
       delegate_to: localhost
       become: false
 
-    - name: Select the managed service account permission definitions
+    - name: Select the service account definition task
       ansible.builtin.set_fact:
-        server_service_account_definitions: >-
+        server_service_account_definition: >-
           {{ (server_account_task_definitions
           | selectattr('name', 'equalto', 'Define the managed Nautobot service accounts')
-          | first)['ansible.builtin.set_fact']['server_service_accounts'] }}
+          | first) }}
+      delegate_to: localhost
+      become: false
+
+    - name: Assert the account catalog is filtered by server_managed_account_names
+      ansible.builtin.assert:
+        that:
+          - server_role_defaults.server_managed_account_names == ['inventory', 'mcp', 'pipeline', 'writer']
+          - >-
+            server_service_account_definition.vars.server_service_account_candidates
+            | map(attribute='name') | list == ['inventory', 'mcp', 'pipeline', 'writer']
+          - >-
+            "selectattr('name', 'in', server_managed_account_names)"
+            in server_service_account_definition['ansible.builtin.set_fact']['server_service_accounts']
+        fail_msg: The service account catalog must be filtered by server_managed_account_names.
+      delegate_to: localhost
+      become: false
+
+    - name: Select the account definitions for permission assertions
+      ansible.builtin.set_fact:
+        server_service_account_definitions: >-
+          {{ server_service_account_definition.vars.server_service_account_candidates }}
       delegate_to: localhost
       become: false
 
