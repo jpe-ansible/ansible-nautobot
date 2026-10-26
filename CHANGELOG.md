@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.5.0...v0.6.0) (2026-10-26)
+
+
+### Features
+
+* **server:** limit account reconciliation to server_managed_account_names ([#47](https://github.com/jpe-ansible/ansible-nautobot/issues/47)) ([b48213c](https://github.com/jpe-ansible/ansible-nautobot/commit/b48213c214dfa42f3374f2d2a5a01beb76dd4bd1))
+
 ## [0.5.0](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.4.2...v0.5.0) (2026-10-25)
 
 
