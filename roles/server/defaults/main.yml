@@ -66,6 +66,11 @@ server_nautobot_url: "https://{{ server_ui_fqdn }}"
 server_nautobot_validate_certs: true
 server_manage_app: true
 server_manage_accounts: true
+server_managed_account_names:
+  - inventory
+  - mcp
+  - pipeline
+  - writer
 
 server_secret_key: ""
 server_secret_key_file: "{{ server_root }}/.secret_key"
