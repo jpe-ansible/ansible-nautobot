@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.6.0...v0.6.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **molecule:** assert the account filter contract instead of re-templating the role task ([#50](https://github.com/jpe-ansible/ansible-nautobot/issues/50)) ([340a642](https://github.com/jpe-ansible/ansible-nautobot/commit/340a642e3a18d3c4bcb79da84d4b0f082899abcb))
+
 ## [0.6.0](https://github.com/jpe-ansible/ansible-nautobot/compare/v0.5.0...v0.6.0) (2026-10-26)
 
 
